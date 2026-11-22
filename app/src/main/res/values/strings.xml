@@ -1,0 +1,36 @@
+<resources>
+    <string name="app_name">SaldoClaro</string>
+
+    <!-- Navigation -->
+    <string name="nav_dashboard">Resumen</string>
+    <string name="nav_accounts">Cuentas</string>
+    <string name="nav_transactions">Movimientos</string>
+    <string name="nav_scheduled">Pagos</string>
+    <string name="nav_analytics">Análisis</string>
+
+    <!-- Common Actions -->
+    <string name="action_save">Guardar</string>
+    <string name="action_cancel">Cancelar</string>
+    <string name="action_delete">Eliminar</string>
+    <string name="action_add">Agregar</string>
+    <string name="action_close">Cerrar</string>
+    <string name="action_pay_now">Pagar ahora</string>
+    <string name="action_export_csv">Exportar CSV</string>
+
+    <!-- Quick Actions -->
+    <string name="quick_expense">Gasto</string>
+    <string name="quick_income">Ingreso</string>
+    <string name="quick_transfer">Transferir</string>
+    <string name="quick_msi">Compra MSI</string>
+    <string name="quick_pay_card">Pagar TDC</string>
+
+    <!-- Content Descriptions -->
+    <string name="cd_add_movement">Registrar nuevo movimiento</string>
+    <string name="cd_add_account">Agregar cuenta o tarjeta</string>
+    <string name="cd_add_scheduled">Programar pago o suscripción</string>
+    <string name="cd_add_budget">Configurar presupuesto</string>
+    <string name="cd_hero_background">Patrón decorativo del resumen financiero</string>
+    <string name="cd_toggle_privacy">Ocultar o mostrar saldos</string>
+    <string name="cd_back">Volver</string>
+    <string name="cd_export_report">Exportar reporte financiero en CSV</string>
+</resources>
