@@ -27,7 +27,7 @@ import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.FileDownload
+import androidx.compose.material.icons.rounded.ImportExport
 import androidx.compose.material.icons.rounded.PieChart
 import androidx.compose.material.icons.rounded.Savings
 import androidx.compose.material.icons.rounded.Search
@@ -109,7 +109,7 @@ fun AnalyticsScreen(
     onDeleteCategory: (CategoryEntity) -> Unit,
     onOpenAddBudget: (CategoryEntity?) -> Unit,
     onRemoveBudget: (CategoryEntity) -> Unit,
-    onExportCsv: () -> Unit,
+    onOpenBackup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val financeColors = LocalFinanceColors.current
@@ -207,18 +207,18 @@ fun AnalyticsScreen(
                                 )
                             }
                             OutlinedButton(
-                                onClick = onExportCsv,
+                                onClick = onOpenBackup,
                                 shape = RoundedCornerShape(12.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("export_csv_button"),
+                                modifier = Modifier.testTag("open_backup_button"),
                             ) {
                                 Icon(
-                                    Icons.Rounded.FileDownload,
-                                    contentDescription = stringResource(R.string.cd_export_report),
+                                    Icons.Rounded.ImportExport,
+                                    contentDescription = stringResource(R.string.cd_backup_data),
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                Text("CSV", style = MaterialTheme.typography.labelLarge)
+                                Text("Respaldo", style = MaterialTheme.typography.labelLarge)
                             }
                         }
 

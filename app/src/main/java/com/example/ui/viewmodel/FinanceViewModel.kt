@@ -1,8 +1,11 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.backup.FinanceBackupManager
+import com.example.data.backup.FinanceBackupSnapshot
 import com.example.data.local.FinanceDatabase
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
@@ -26,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.Locale
 import kotlin.math.max
@@ -467,6 +471,54 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun buildCsvExport(): String {
         val current = uiState.value
         return FinanceFormatters.buildCsvReport(current.accounts, current.transactions)
+    }
+
+    // --- Full Backup Export & Import ---
+
+    suspend fun exportBackupToUri(uri: Uri): Result<FinanceBackupSnapshot> = withContext(Dispatchers.IO) {
+        runCatching {
+            val app = getApplication<Application>()
+            val snapshot = repository.createBackupSnapshot(app)
+            val json = FinanceBackupManager.serializeToJson(snapshot)
+            FinanceBackupManager.writeTextToUri(app, uri, json)
+            postMessage("Respaldo guardado (${snapshot.accounts.size} cuentas, ${snapshot.transactions.size} movimientos)")
+            snapshot
+        }
+    }
+
+    suspend fun exportCsvToUri(uri: Uri): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val app = getApplication<Application>()
+            val snapshot = repository.createBackupSnapshot(app)
+            val csv = FinanceFormatters.buildCsvReport(snapshot.accounts, snapshot.transactions)
+            FinanceBackupManager.writeTextToUri(app, uri, csv)
+            postMessage("CSV guardado con ${snapshot.transactions.size} movimientos")
+            snapshot.transactions.size
+        }
+    }
+
+    suspend fun inspectBackupFromUri(uri: Uri): Result<FinanceBackupSnapshot> = withContext(Dispatchers.IO) {
+        runCatching {
+            val app = getApplication<Application>()
+            val raw = FinanceBackupManager.readTextFromUri(app, uri)
+            FinanceBackupManager.parseFromJson(raw)
+        }
+    }
+
+    suspend fun restoreBackup(snapshot: FinanceBackupSnapshot): Result<FinanceBackupSnapshot> = withContext(Dispatchers.IO) {
+        runCatching {
+            val app = getApplication<Application>()
+            repository.restoreBackupSnapshot(app, snapshot)
+            val prefs = PaymentNotificationManager.getPreferences(app)
+            if (prefs.enabled && PaymentNotificationManager.hasNotificationPermission(app)) {
+                PaymentNotificationManager.scheduleDailyReminder(app)
+                PaymentNotificationManager.checkAndNotifyDueToday(app)
+            }
+            postMessage(
+                "Respaldo restaurado: ${snapshot.accounts.size} cuentas y ${snapshot.transactions.size} movimientos"
+            )
+            snapshot
+        }
     }
 
     // --- Derived Analytics & Summaries ---

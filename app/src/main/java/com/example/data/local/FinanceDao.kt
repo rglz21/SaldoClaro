@@ -32,6 +32,9 @@ interface FinanceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAccount(account: AccountEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAccounts(accounts: List<AccountEntity>)
+
     @Update
     suspend fun updateAccount(account: AccountEntity)
 
@@ -42,6 +45,9 @@ interface FinanceDao {
     @Query("SELECT * FROM transactions ORDER BY dateMillis DESC, id DESC")
     fun observeTransactions(): Flow<List<TransactionEntity>>
 
+    @Query("SELECT * FROM transactions ORDER BY id ASC")
+    suspend fun getAllTransactionsOnce(): List<TransactionEntity>
+
     @Query("SELECT COUNT(*) FROM transactions")
     suspend fun countTransactions(): Int
 
@@ -50,6 +56,9 @@ interface FinanceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransaction(transaction: TransactionEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTransactions(transactions: List<TransactionEntity>)
 
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun deleteTransactionById(id: Long)
@@ -61,11 +70,17 @@ interface FinanceDao {
     @Query("SELECT * FROM installment_plans ORDER BY startDateMillis DESC")
     fun observeInstallmentPlans(): Flow<List<InstallmentPlanEntity>>
 
+    @Query("SELECT * FROM installment_plans ORDER BY id ASC")
+    suspend fun getAllInstallmentPlansOnce(): List<InstallmentPlanEntity>
+
     @Query("SELECT * FROM installment_plans WHERE id = :id LIMIT 1")
     suspend fun getInstallmentPlanById(id: Long): InstallmentPlanEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertInstallmentPlan(plan: InstallmentPlanEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertInstallmentPlans(plans: List<InstallmentPlanEntity>)
 
     @Update
     suspend fun updateInstallmentPlan(plan: InstallmentPlanEntity)
@@ -85,6 +100,9 @@ interface FinanceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertScheduledPayment(payment: ScheduledPaymentEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertScheduledPayments(payments: List<ScheduledPaymentEntity>)
 
     @Update
     suspend fun updateScheduledPayment(payment: ScheduledPaymentEntity)
@@ -108,6 +126,9 @@ interface FinanceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCategory(category: CategoryEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCategories(categories: List<CategoryEntity>)
+
     @Update
     suspend fun updateCategory(category: CategoryEntity)
 
@@ -121,8 +142,14 @@ interface FinanceDao {
     @Query("SELECT * FROM budgets ORDER BY monthlyLimit DESC")
     fun observeBudgets(): Flow<List<BudgetEntity>>
 
+    @Query("SELECT * FROM budgets")
+    suspend fun getAllBudgetsOnce(): List<BudgetEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertBudget(budget: BudgetEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBudgets(budgets: List<BudgetEntity>)
 
     @Query("DELETE FROM budgets WHERE category = :category")
     suspend fun deleteBudget(category: String)

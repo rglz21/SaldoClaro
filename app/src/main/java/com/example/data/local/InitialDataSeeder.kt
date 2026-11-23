@@ -35,6 +35,13 @@ object InitialDataSeeder {
         val notes: String,
     )
 
+    fun markAsSeeded(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_SEEDED_CSV, true)
+            .putBoolean(KEY_SEEDED_RECURRING_INCOME, true)
+            .apply()
+    }
+
     suspend fun seedIfNeeded(context: Context, database: FinanceDatabase) {
         val dao = database.financeDao()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

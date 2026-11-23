@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import androidx.room.withTransaction
+import com.example.data.backup.FinanceBackupSnapshot
 import com.example.data.local.FinanceDatabase
 import com.example.data.local.InitialDataSeeder
 import com.example.data.model.AccountEntity
@@ -11,6 +12,7 @@ import com.example.data.model.InstallmentPlanEntity
 import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
+import com.example.notifications.PaymentNotificationManager
 import com.example.util.DateMath
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.max
@@ -389,6 +391,58 @@ class FinanceRepository(private val database: FinanceDatabase) {
 
     suspend fun deleteCategory(categoryId: Long) {
         dao.deleteCategoryById(categoryId)
+    }
+
+    // --- Full Backup & Restore ---
+
+    suspend fun createBackupSnapshot(context: Context): FinanceBackupSnapshot {
+        val snapshot = database.withTransaction {
+            FinanceBackupSnapshot(
+                exportedAtMillis = System.currentTimeMillis(),
+                accounts = dao.getAllAccountsOnce(),
+                transactions = dao.getAllTransactionsOnce(),
+                installmentPlans = dao.getAllInstallmentPlansOnce(),
+                scheduledPayments = dao.getAllScheduledPaymentsOnce(),
+                categories = dao.getAllCategoriesOnce(),
+                budgets = dao.getAllBudgetsOnce(),
+                notificationPreferences = PaymentNotificationManager.getPreferences(context),
+            )
+        }
+        return snapshot
+    }
+
+    suspend fun restoreBackupSnapshot(context: Context, snapshot: FinanceBackupSnapshot) {
+        database.withTransaction {
+            dao.deleteAllTransactions()
+            dao.deleteAllInstallmentPlans()
+            dao.deleteAllScheduledPayments()
+            dao.deleteAllBudgets()
+            dao.deleteAllCategories()
+            dao.deleteAllAccounts()
+
+            if (snapshot.accounts.isNotEmpty()) {
+                dao.insertAccounts(snapshot.accounts)
+            }
+            if (snapshot.categories.isNotEmpty()) {
+                dao.insertCategories(snapshot.categories)
+            }
+            if (snapshot.budgets.isNotEmpty()) {
+                dao.insertBudgets(snapshot.budgets)
+            }
+            if (snapshot.installmentPlans.isNotEmpty()) {
+                dao.insertInstallmentPlans(snapshot.installmentPlans)
+            }
+            if (snapshot.scheduledPayments.isNotEmpty()) {
+                dao.insertScheduledPayments(snapshot.scheduledPayments)
+            }
+            if (snapshot.transactions.isNotEmpty()) {
+                dao.insertTransactions(snapshot.transactions)
+            }
+        }
+        InitialDataSeeder.markAsSeeded(context)
+        snapshot.notificationPreferences?.let { prefs ->
+            PaymentNotificationManager.savePreferences(context, prefs)
+        }
     }
 
     // --- Balance math helpers ---

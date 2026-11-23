@@ -27,10 +27,10 @@ import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.EventRepeat
+import androidx.compose.material.icons.rounded.ImportExport
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
@@ -46,6 +46,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,6 +61,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -91,6 +93,7 @@ import com.example.ui.sheets.AddTransactionSheet
 import com.example.ui.sheets.AnalyticsCategoryDetailSheet
 import com.example.ui.sheets.AnalyticsKpiDetailSheet
 import com.example.ui.sheets.AnalyticsKpiKind
+import com.example.ui.sheets.BackupDataSheet
 import com.example.ui.sheets.MovementSheetMode
 import com.example.ui.sheets.NotificationSettingsSheet
 import com.example.ui.sheets.ScheduledDetailSheet
@@ -182,6 +185,7 @@ fun SaldoClaroApp(
     var categorySheet by remember { mutableStateOf<CategorySheetRequest?>(null) }
     var budgetSheet by remember { mutableStateOf<BudgetSheetRequest?>(null) }
     var showNotificationSettings by remember { mutableStateOf(false) }
+    var showBackupSheet by remember { mutableStateOf(false) }
 
     // Sub-view modes
     var transactionsViewMode by remember { mutableStateOf(TransactionsViewMode.CALENDAR) }
@@ -354,15 +358,27 @@ fun SaldoClaroApp(
                 containerColor = MaterialTheme.colorScheme.background,
                 contentWindowInsets = WindowInsets.safeDrawing,
                 topBar = {
-                    CenterAlignedTopAppBar(
+                    TopAppBar(
                         title = {
                             Text(
                                 text = currentTitle,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         },
                         actions = {
+                            IconButton(
+                                onClick = { showBackupSheet = true },
+                                modifier = Modifier.testTag("topbar_backup_button"),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ImportExport,
+                                    contentDescription = stringResource(R.string.cd_backup_data),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                             IconButton(
                                 onClick = { showNotificationSettings = true },
                                 modifier = Modifier.testTag("topbar_notifications_button"),
@@ -404,7 +420,7 @@ fun SaldoClaroApp(
                                 }
                             }
                         },
-                        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        colors = TopAppBarDefaults.topAppBarColors(
                             containerColor = MaterialTheme.colorScheme.background,
                         ),
                     )
@@ -540,15 +556,7 @@ fun SaldoClaroApp(
                                 onDeleteCategory = viewModel::deleteCategory,
                                 onOpenAddBudget = { cat -> budgetSheet = BudgetSheetRequest(preselectedCategory = cat) },
                                 onRemoveBudget = { cat -> viewModel.updateCategoryBudget(cat, 0.0) },
-                                onExportCsv = {
-                                    val csv = viewModel.buildCsvExport()
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/csv"
-                                        putExtra(Intent.EXTRA_SUBJECT, "Reporte financiero SaldoClaro")
-                                        putExtra(Intent.EXTRA_TEXT, csv)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Exportar movimientos CSV"))
-                                },
+                                onOpenBackup = { showBackupSheet = true },
                             )
                         }
                     }
@@ -756,6 +764,17 @@ fun SaldoClaroApp(
             onStatusMessage = { msg ->
                 appScope.launch { snackbarHostState.showSnackbar(msg) }
             },
+        )
+    }
+
+    if (showBackupSheet) {
+        BackupDataSheet(
+            state = state,
+            onExportBackupToUri = viewModel::exportBackupToUri,
+            onExportCsvToUri = viewModel::exportCsvToUri,
+            onInspectBackupFromUri = viewModel::inspectBackupFromUri,
+            onConfirmRestoreBackup = viewModel::restoreBackup,
+            onDismiss = { showBackupSheet = false },
         )
     }
 }
