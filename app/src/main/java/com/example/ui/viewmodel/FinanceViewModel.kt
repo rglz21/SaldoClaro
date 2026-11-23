@@ -15,6 +15,7 @@ import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
 import com.example.data.repository.FinanceRepository
+import com.example.notifications.PaymentNotificationManager
 import com.example.util.DateMath
 import com.example.util.FinanceFormatters
 import com.example.util.NextDateInfo
@@ -361,7 +362,21 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 repository.saveScheduledPayment(payment)
             }.onSuccess {
                 val label = payment.recurringKind.labelEs
-                postMessage("$label \"${payment.name}\" guardado")
+                postMessage(
+                    if (payment.recurringKind.isOneTime || payment.recurrenceFrequency.isOneTime) {
+                        "Pago único \"${payment.name}\" programado para el ${FinanceFormatters.shortDate(payment.nextDueDateMillis)}"
+                    } else {
+                        "$label \"${payment.name}\" guardado"
+                    }
+                )
+                viewModelScope.launch(Dispatchers.IO) {
+                    val app = getApplication<Application>()
+                    val prefs = PaymentNotificationManager.getPreferences(app)
+                    if (prefs.enabled && PaymentNotificationManager.hasNotificationPermission(app)) {
+                        PaymentNotificationManager.scheduleDailyReminder(app)
+                        PaymentNotificationManager.checkAndNotifyDueToday(app)
+                    }
+                }
             }.onFailure {
                 postMessage(it.message ?: "Error al guardar el registro programado")
             }
@@ -394,8 +409,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 repository.executeScheduledPaymentNow(payment)
             }.onSuccess {
-                val verb = if (payment.recurringKind.isIncome) "Ingreso" else "Pago"
-                postMessage("$verb de \"${payment.name}\" registrado y próxima fecha actualizada")
+                val isOneTime = payment.recurringKind.isOneTime || payment.recurrenceFrequency.isOneTime
+                val msg = when {
+                    isOneTime -> "Pago único \"${payment.name}\" registrado y completado"
+                    payment.recurringKind.isIncome -> "Ingreso de \"${payment.name}\" registrado y próxima fecha actualizada"
+                    else -> "Pago de \"${payment.name}\" registrado y próxima fecha actualizada"
+                }
+                postMessage(msg)
             }.onFailure {
                 postMessage(it.message ?: "No se pudo registrar el movimiento")
             }

@@ -236,7 +236,9 @@ object PaymentNotificationManager {
         event: ProjectedCalendarEvent,
         prefs: NotificationPreferences,
     ): Boolean = when (event.kind) {
-        ProjectedEventKind.SUBSCRIPTION, ProjectedEventKind.RECURRING_BILL -> prefs.notifyBillsAndSubscriptions
+        ProjectedEventKind.ONE_TIME_PAYMENT,
+        ProjectedEventKind.SUBSCRIPTION,
+        ProjectedEventKind.RECURRING_BILL -> prefs.notifyBillsAndSubscriptions
         ProjectedEventKind.RECURRING_INCOME -> prefs.notifyRecurringIncomes
         ProjectedEventKind.CARD_CUTOFF -> prefs.notifyCardCutoffs
         ProjectedEventKind.CARD_PAYMENT_DUE -> prefs.notifyCardDueDates
@@ -249,6 +251,7 @@ object PaymentNotificationManager {
             " ($sign${FinanceFormatters.currency(event.amount)})"
         } else ""
         return when (event.kind) {
+            ProjectedEventKind.ONE_TIME_PAYMENT -> "Hoy debes pagar: ${event.title}$amountPart"
             ProjectedEventKind.RECURRING_INCOME -> "Ingreso programado hoy: ${event.title}$amountPart"
             ProjectedEventKind.SUBSCRIPTION -> "Hoy se cobra suscripción: ${event.title}$amountPart"
             ProjectedEventKind.RECURRING_BILL -> "Hoy vence pago: ${event.title}$amountPart"

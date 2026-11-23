@@ -355,8 +355,13 @@ class FinanceRepository(private val database: FinanceDatabase) {
                     scheduledPaymentId = payment.id,
                 )
             )
-            val nextDate = DateMath.advanceDate(payment.nextDueDateMillis, payment.recurrenceFrequency)
-            dao.updateScheduledPayment(payment.copy(nextDueDateMillis = nextDate))
+            val isOneTime = payment.recurringKind.isOneTime || payment.recurrenceFrequency.isOneTime
+            if (isOneTime) {
+                dao.updateScheduledPayment(payment.copy(isActive = false))
+            } else {
+                val nextDate = DateMath.advanceDate(payment.nextDueDateMillis, payment.recurrenceFrequency)
+                dao.updateScheduledPayment(payment.copy(nextDueDateMillis = nextDate))
+            }
         }
     }
 

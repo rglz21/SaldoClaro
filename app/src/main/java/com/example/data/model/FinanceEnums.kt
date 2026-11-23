@@ -32,11 +32,13 @@ enum class TransactionType(val labelEs: String) {
 }
 
 enum class RecurringKind(val labelEs: String) {
+    ONE_TIME_PAYMENT("Pago único"),
     SUBSCRIPTION("Suscripción"),
     RECURRING_BILL("Pago frecuente"),
     RECURRING_INCOME("Ingreso frecuente");
 
     val isIncome: Boolean get() = this == RECURRING_INCOME
+    val isOneTime: Boolean get() = this == ONE_TIME_PAYMENT
 
     companion object {
         fun fromName(name: String): RecurringKind =
@@ -45,13 +47,20 @@ enum class RecurringKind(val labelEs: String) {
 }
 
 enum class RecurrenceFrequency(val labelEs: String, val monthlyFactor: Double) {
+    ONCE("Una sola vez", 0.0),
     WEEKLY("Semanal", 4.333),
     BIWEEKLY("Quincenal", 2.0),
     MONTHLY("Mensual", 1.0),
     BIMONTHLY("Bimestral", 0.5),
     YEARLY("Anual", 1.0 / 12.0);
 
+    val isOneTime: Boolean get() = this == ONCE
+
     companion object {
+        val recurringEntries: List<RecurrenceFrequency> = listOf(
+            WEEKLY, BIWEEKLY, MONTHLY, BIMONTHLY, YEARLY
+        )
+
         fun fromName(name: String): RecurrenceFrequency =
             entries.firstOrNull { it.name == name } ?: MONTHLY
     }

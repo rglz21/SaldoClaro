@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.CreditCard
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Event
+import androidx.compose.material.icons.rounded.EventNote
 import androidx.compose.material.icons.rounded.Handshake
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.Subscriptions
@@ -120,6 +121,7 @@ fun CalendarCashflowView(
     scheduledPayments: List<ScheduledPaymentEntity>,
     hideBalances: Boolean,
     onAddForDate: (Long) -> Unit,
+    onScheduleForDate: (Long) -> Unit = {},
     onTransactionClick: (TransactionEntity) -> Unit,
     onRequestDelete: (TransactionEntity) -> Unit,
     onScheduledClick: (ScheduledPaymentEntity) -> Unit = {},
@@ -618,15 +620,29 @@ fun CalendarCashflowView(
                                 fontWeight = FontWeight.Bold,
                             )
                         }
-                        FilledTonalButton(
-                            onClick = { onAddForDate(selectedDayStart + 43_200_000L) },
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("calendar_add_for_day_button"),
-                        ) {
-                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Agregar", style = MaterialTheme.typography.labelLarge)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (selectedDayStart >= todayStart) {
+                                FilledTonalButton(
+                                    onClick = { onScheduleForDate(selectedDayStart + 43_200_000L) },
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("calendar_schedule_for_day_button"),
+                                ) {
+                                    Icon(Icons.Rounded.EventNote, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Programar", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                            FilledTonalButton(
+                                onClick = { onAddForDate(selectedDayStart + 43_200_000L) },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("calendar_add_for_day_button"),
+                            ) {
+                                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Agregar", style = MaterialTheme.typography.labelMedium)
+                            }
                         }
                     }
 
@@ -1017,6 +1033,11 @@ private fun ProjectedEventCard(
 ) {
     val financeColors = LocalFinanceColors.current
     val (icon, tint, container) = when (event.kind) {
+        ProjectedEventKind.ONE_TIME_PAYMENT -> Triple(
+            Icons.Rounded.EventNote,
+            MaterialTheme.colorScheme.primary,
+            MaterialTheme.colorScheme.primaryContainer,
+        )
         ProjectedEventKind.RECURRING_INCOME -> Triple(
             Icons.Rounded.TrendingUp,
             financeColors.income,

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.EventNote
 import androidx.compose.material.icons.rounded.EventRepeat
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Subscriptions
@@ -68,6 +69,7 @@ import com.example.util.FinanceFormatters
 
 private enum class ScheduledFilter(val labelEs: String) {
     ALL("Todos"),
+    ONE_TIME("Pagos únicos"),
     INCOMES("Ingresos frecuentes"),
     SUBSCRIPTIONS("Suscripciones"),
     BILLS("Pagos frecuentes"),
@@ -94,9 +96,14 @@ fun ScheduledScreen(
     val filtered = remember(state.scheduledPayments, filter) {
         when (filter) {
             ScheduledFilter.ALL -> state.scheduledPayments
+            ScheduledFilter.ONE_TIME -> state.scheduledPayments.filter {
+                it.recurringKind == RecurringKind.ONE_TIME_PAYMENT || it.recurrenceFrequency.isOneTime
+            }
             ScheduledFilter.INCOMES -> state.scheduledPayments.filter { it.recurringKind == RecurringKind.RECURRING_INCOME }
             ScheduledFilter.SUBSCRIPTIONS -> state.scheduledPayments.filter { it.recurringKind == RecurringKind.SUBSCRIPTION }
-            ScheduledFilter.BILLS -> state.scheduledPayments.filter { it.recurringKind == RecurringKind.RECURRING_BILL }
+            ScheduledFilter.BILLS -> state.scheduledPayments.filter {
+                it.recurringKind == RecurringKind.RECURRING_BILL && !it.recurrenceFrequency.isOneTime
+            }
         }
     }
 
@@ -206,28 +213,40 @@ fun ScheduledScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         FilledTonalButton(
+                            onClick = { onAddScheduled(RecurringKind.ONE_TIME_PAYMENT) },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("scheduled_add_onetime_button"),
+                        ) {
+                            Icon(Icons.Rounded.EventNote, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Pago único", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                        }
+                        FilledTonalButton(
                             onClick = { onAddScheduled(RecurringKind.RECURRING_INCOME) },
                             shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("scheduled_add_income_button"),
                         ) {
                             Icon(Icons.Rounded.TrendingUp, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Ingreso frecuente", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            Text("Ingreso", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                         }
                         FilledTonalButton(
                             onClick = { onAddScheduled(RecurringKind.SUBSCRIPTION) },
                             shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("scheduled_add_expense_button"),
                         ) {
                             Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Pago / Suscripción", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            Text("Frecuente", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                         }
                     }
                 }
@@ -251,19 +270,33 @@ fun ScheduledScreen(
         if (filtered.isEmpty()) {
             item {
                 val isIncomeFilter = filter == ScheduledFilter.INCOMES
+                val isOneTimeFilter = filter == ScheduledFilter.ONE_TIME
                 EmptyFinanceCard(
-                    icon = if (isIncomeFilter) Icons.Rounded.TrendingUp else Icons.Rounded.EventRepeat,
-                    title = if (isIncomeFilter) "Sin ingresos frecuentes" else "Sin movimientos programados",
-                    subtitle = if (isIncomeFilter) {
-                        "Registra tus ingresos recurrentes como salario, quincena, alquileres o honorarios para proyectar tu flujo mensual."
-                    } else {
-                        "Asocia tus suscripciones, pagos frecuentes e ingresos recurrentes a tus cuentas o tarjetas."
+                    icon = when {
+                        isOneTimeFilter -> Icons.Rounded.EventNote
+                        isIncomeFilter -> Icons.Rounded.TrendingUp
+                        else -> Icons.Rounded.EventRepeat
                     },
-                    actionLabel = if (isIncomeFilter) "Programar ingreso frecuente" else "Programar suscripción o pago",
+                    title = when {
+                        isOneTimeFilter -> "Sin pagos únicos programados"
+                        isIncomeFilter -> "Sin ingresos frecuentes"
+                        else -> "Sin movimientos programados"
+                    },
+                    subtitle = when {
+                        isOneTimeFilter -> "Agenda cualquier pago puntual que debas hacer un día específico y te notificaremos ese día para que no se te olvide."
+                        isIncomeFilter -> "Registra tus ingresos recurrentes como salario, quincena, alquileres o honorarios para proyectar tu flujo mensual."
+                        else -> "Asocia pagos únicos, suscripciones, pagos frecuentes e ingresos recurrentes a tus cuentas o tarjetas."
+                    },
+                    actionLabel = when {
+                        isOneTimeFilter -> "Programar pago único"
+                        isIncomeFilter -> "Programar ingreso frecuente"
+                        else -> "Programar pago o suscripción"
+                    },
                     actionTestTag = "scheduled_empty_add_button",
                     onActionClick = {
                         onAddScheduled(
                             when (filter) {
+                                ScheduledFilter.ONE_TIME -> RecurringKind.ONE_TIME_PAYMENT
                                 ScheduledFilter.INCOMES -> RecurringKind.RECURRING_INCOME
                                 ScheduledFilter.BILLS -> RecurringKind.RECURRING_BILL
                                 else -> RecurringKind.SUBSCRIPTION
@@ -278,18 +311,22 @@ fun ScheduledScreen(
                 val daysLeft = DateMath.daysBetween(System.currentTimeMillis(), item.nextDueDateMillis)
                 val isIncome = item.recurringKind.isIncome
                 val isSub = item.recurringKind == RecurringKind.SUBSCRIPTION
+                val isOneTime = item.recurringKind.isOneTime || item.recurrenceFrequency.isOneTime
 
                 val iconBg = when {
                     isIncome -> financeColors.incomeContainer
+                    isOneTime -> MaterialTheme.colorScheme.primaryContainer
                     isSub -> financeColors.transferContainer
                     else -> financeColors.warningContainer
                 }
                 val iconTint = when {
                     isIncome -> financeColors.income
+                    isOneTime -> MaterialTheme.colorScheme.primary
                     isSub -> financeColors.transfer
                     else -> financeColors.warning
                 }
                 val iconVector = when (item.recurringKind) {
+                    RecurringKind.ONE_TIME_PAYMENT -> Icons.Rounded.EventNote
                     RecurringKind.RECURRING_INCOME -> Icons.Rounded.TrendingUp
                     RecurringKind.SUBSCRIPTION -> Icons.Rounded.Subscriptions
                     RecurringKind.RECURRING_BILL -> Icons.Rounded.Bolt
@@ -360,7 +397,11 @@ fun ScheduledScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = "Próximo: ${FinanceFormatters.fullDate(item.nextDueDateMillis)}",
+                                        text = if (isOneTime) {
+                                            "Fecha: ${FinanceFormatters.fullDate(item.nextDueDateMillis)}"
+                                        } else {
+                                            "Próximo: ${FinanceFormatters.fullDate(item.nextDueDateMillis)}"
+                                        },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -382,6 +423,12 @@ fun ScheduledScreen(
                                                 daysLeft <= 3 -> financeColors.expense
                                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                                             },
+                                        )
+                                    } else if (isOneTime) {
+                                        PillBadge(
+                                            text = "Completado",
+                                            containerColor = financeColors.incomeContainer,
+                                            contentColor = financeColors.income,
                                         )
                                     }
                                 }

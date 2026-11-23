@@ -171,8 +171,10 @@ object DateMath {
     }
 
     fun advanceDate(currentMillis: Long, frequency: RecurrenceFrequency): Long {
+        if (frequency == RecurrenceFrequency.ONCE) return currentMillis
         val cal = Calendar.getInstance().apply { timeInMillis = currentMillis }
         when (frequency) {
+            RecurrenceFrequency.ONCE -> Unit
             RecurrenceFrequency.WEEKLY -> cal.add(Calendar.DAY_OF_YEAR, 7)
             RecurrenceFrequency.BIWEEKLY -> cal.add(Calendar.DAY_OF_YEAR, 14)
             RecurrenceFrequency.MONTHLY -> cal.add(Calendar.MONTH, 1)

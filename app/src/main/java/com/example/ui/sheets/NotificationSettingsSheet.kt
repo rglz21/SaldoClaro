@@ -244,8 +244,8 @@ fun NotificationSettingsSheet(
             ) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     NotificationToggleRow(
-                        title = "Pagos frecuentes y suscripciones",
-                        subtitle = "Spotify, Internet, Universidad, servicios...",
+                        title = "Pagos únicos, frecuentes y suscripciones",
+                        subtitle = "Pagos puntuales agendados, Spotify, Internet, servicios...",
                         checked = prefs.notifyBillsAndSubscriptions,
                         enabled = prefs.enabled && hasPermission,
                         onCheckedChange = { updatePrefs(prefs.copy(notifyBillsAndSubscriptions = it)) },

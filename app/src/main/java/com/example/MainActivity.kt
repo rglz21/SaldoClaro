@@ -136,7 +136,8 @@ private data class AccountSheetRequest(
 
 private data class ScheduledSheetRequest(
     val editing: ScheduledPaymentEntity? = null,
-    val initialKind: RecurringKind = RecurringKind.SUBSCRIPTION,
+    val initialKind: RecurringKind = RecurringKind.ONE_TIME_PAYMENT,
+    val initialDateMillis: Long? = null,
 )
 
 private data class CategorySheetRequest(
@@ -502,6 +503,12 @@ fun SaldoClaroApp(
                                     movementSheet = MovementSheetRequest(mode = mode, initialDateMillis = dateMillis)
                                 },
                                 onDeleteTransaction = viewModel::deleteTransaction,
+                                onScheduleForDate = { dateMillis ->
+                                    scheduledSheet = ScheduledSheetRequest(
+                                        initialKind = RecurringKind.ONE_TIME_PAYMENT,
+                                        initialDateMillis = dateMillis,
+                                    )
+                                },
                                 onScheduledClick = { item -> detailScheduledId = item.id },
                                 onExecuteScheduledNow = viewModel::executeScheduledPaymentNow,
                                 onAccountClick = { acc -> detailAccountId = acc.id },
@@ -707,6 +714,7 @@ fun SaldoClaroApp(
             categories = state.categories,
             editingPayment = req.editing,
             initialKind = req.initialKind,
+            initialDateMillis = req.initialDateMillis,
             onDismiss = { scheduledSheet = null },
             onCreateAccountFirst = { accountSheet = AccountSheetRequest(initialType = AccountType.DEBIT) },
             onSave = { payment ->

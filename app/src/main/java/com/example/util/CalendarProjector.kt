@@ -9,6 +9,7 @@ import java.util.Calendar
 import kotlin.math.min
 
 enum class ProjectedEventKind(val labelEs: String, val shortBadge: String) {
+    ONE_TIME_PAYMENT("Pago único", "Único"),
     RECURRING_INCOME("Ingreso frecuente", "Ingreso"),
     SUBSCRIPTION("Suscripción", "Suscrip."),
     RECURRING_BILL("Pago frecuente", "Pago"),
@@ -18,7 +19,10 @@ enum class ProjectedEventKind(val labelEs: String, val shortBadge: String) {
     LENT_LOAN_COLLECTION("Cobro de préstamo", "Por cobrar");
 
     val isScheduledPayment: Boolean
-        get() = this == RECURRING_INCOME || this == SUBSCRIPTION || this == RECURRING_BILL
+        get() = this == ONE_TIME_PAYMENT ||
+            this == RECURRING_INCOME ||
+            this == SUBSCRIPTION ||
+            this == RECURRING_BILL
 }
 
 data class ProjectedCalendarEvent(
@@ -77,29 +81,35 @@ object CalendarProjector {
             eventsByDay.getOrPut(event.dateMillis) { mutableListOf() }.add(event)
         }
 
-        // 1. Recurring incomes, subscriptions, and bills
+        // 1. One-time scheduled payments, recurring incomes, subscriptions, and bills
         scheduledPayments.filter { it.isActive }.forEach { item ->
             val accName = accountMap[item.accountId]?.name ?: "Sin cuenta"
+            val isOneTime = item.recurringKind.isOneTime || item.recurrenceFrequency.isOneTime
             val kind = when (item.recurringKind) {
+                RecurringKind.ONE_TIME_PAYMENT -> ProjectedEventKind.ONE_TIME_PAYMENT
                 RecurringKind.RECURRING_INCOME -> ProjectedEventKind.RECURRING_INCOME
                 RecurringKind.SUBSCRIPTION -> ProjectedEventKind.SUBSCRIPTION
-                RecurringKind.RECURRING_BILL -> ProjectedEventKind.RECURRING_BILL
+                RecurringKind.RECURRING_BILL -> if (isOneTime) ProjectedEventKind.ONE_TIME_PAYMENT else ProjectedEventKind.RECURRING_BILL
             }
             val firstDue = DateMath.startOfDay(item.nextDueDateMillis)
-            val occurrences = collectRecurringOccurrencesInRange(
-                anchorMillis = firstDue,
-                frequency = item.recurrenceFrequency,
-                rangeStart = monthStart,
-                rangeEnd = monthEnd,
-                minAllowedMillis = todayStartMillis,
-            )
+            val occurrences = if (isOneTime) {
+                if (firstDue in monthStart..monthEnd) listOf(firstDue) else emptyList()
+            } else {
+                collectRecurringOccurrencesInRange(
+                    anchorMillis = firstDue,
+                    frequency = item.recurrenceFrequency,
+                    rangeStart = monthStart,
+                    rangeEnd = monthEnd,
+                    minAllowedMillis = todayStartMillis,
+                )
+            }
             occurrences.forEachIndexed { idx, occMillis ->
                 addEvent(
                     ProjectedCalendarEvent(
                         id = "sched_${item.id}_${occMillis}_$idx",
                         dateMillis = occMillis,
                         title = item.name,
-                        subtitle = "${item.recurrenceFrequency.labelEs} · $accName",
+                        subtitle = if (isOneTime) "Pago único · $accName" else "${item.recurrenceFrequency.labelEs} · $accName",
                         kind = kind,
                         amount = item.amount,
                         isInflow = item.recurringKind.isIncome,
@@ -340,6 +350,7 @@ object CalendarProjector {
             }
             val nextCal = Calendar.getInstance().apply { timeInMillis = cursor }
             when (frequency) {
+                RecurrenceFrequency.ONCE -> break
                 RecurrenceFrequency.WEEKLY -> nextCal.add(Calendar.DAY_OF_YEAR, 7)
                 RecurrenceFrequency.BIWEEKLY -> nextCal.add(Calendar.DAY_OF_YEAR, 14)
                 RecurrenceFrequency.MONTHLY -> {

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.EventNote
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material3.Button
@@ -704,6 +705,7 @@ fun ScheduledDetailSheet(
     val account = accounts.firstOrNull { it.id == item.accountId }
     val isIncome = item.recurringKind.isIncome
     val isSub = item.recurringKind == RecurringKind.SUBSCRIPTION
+    val isOneTime = item.recurringKind.isOneTime || item.recurrenceFrequency.isOneTime
     val daysLeft = DateMath.daysBetween(System.currentTimeMillis(), item.nextDueDateMillis)
     val monthlyEquivalent = item.amount * item.recurrenceFrequency.monthlyFactor
     val yearlyEquivalent = monthlyEquivalent * 12.0
@@ -714,11 +716,13 @@ fun ScheduledDetailSheet(
 
     val accentColor = when {
         isIncome -> financeColors.income
+        isOneTime -> MaterialTheme.colorScheme.primary
         isSub -> financeColors.transfer
         else -> financeColors.warning
     }
     val containerColor = when {
         isIncome -> financeColors.incomeContainer
+        isOneTime -> MaterialTheme.colorScheme.primaryContainer
         isSub -> financeColors.transferContainer
         else -> financeColors.warningContainer
     }
@@ -745,6 +749,7 @@ fun ScheduledDetailSheet(
                 ) {
                     Icon(
                         imageVector = when (item.recurringKind) {
+                            RecurringKind.ONE_TIME_PAYMENT -> Icons.Rounded.EventNote
                             RecurringKind.RECURRING_INCOME -> Icons.Rounded.TrendingUp
                             RecurringKind.SUBSCRIPTION -> Icons.Rounded.Subscriptions
                             RecurringKind.RECURRING_BILL -> Icons.Rounded.Bolt
@@ -762,7 +767,11 @@ fun ScheduledDetailSheet(
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        text = "${item.recurringKind.labelEs} · ${if (item.isActive) "Activo" else "Pausado"}",
+                        text = "${item.recurringKind.labelEs} · ${when {
+                            item.isActive -> "Pendiente / Activo"
+                            isOneTime -> "Completado"
+                            else -> "Pausado"
+                        }}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -777,22 +786,33 @@ fun ScheduledDetailSheet(
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     DetailInfoRow(
-                        label = if (isIncome) "Monto por ingreso" else "Monto por cobro",
+                        label = when {
+                            isIncome -> "Monto por ingreso"
+                            isOneTime -> "Monto a pagar"
+                            else -> "Monto por cobro"
+                        },
                         value = (if (isIncome) "+" else "") + FinanceFormatters.currency(item.amount, hideBalances),
                         mono = true,
                         valueColor = if (isIncome) financeColors.income else MaterialTheme.colorScheme.onSurface,
                     )
                     DetailInfoRow("Frecuencia", item.recurrenceFrequency.labelEs)
-                    DetailInfoRow("Equivalente mensual", FinanceFormatters.currency(monthlyEquivalent, hideBalances), mono = true)
-                    DetailInfoRow("Proyección anual", FinanceFormatters.currency(yearlyEquivalent, hideBalances), mono = true)
+                    if (!isOneTime) {
+                        DetailInfoRow("Equivalente mensual", FinanceFormatters.currency(monthlyEquivalent, hideBalances), mono = true)
+                        DetailInfoRow("Proyección anual", FinanceFormatters.currency(yearlyEquivalent, hideBalances), mono = true)
+                    }
                     DetailInfoRow(
                         if (isIncome) "Cuenta receptora" else "Cuenta / tarjeta",
                         account?.name ?: "Sin cuenta",
                     )
                     DetailInfoRow("Categoría", item.categoryLabel)
                     DetailInfoRow(
-                        label = if (isIncome) "Próximo ingreso" else "Próximo cobro",
+                        label = when {
+                            isOneTime -> "Fecha de pago"
+                            isIncome -> "Próximo ingreso"
+                            else -> "Próximo cobro"
+                        },
                         value = "${FinanceFormatters.fullDate(item.nextDueDateMillis)} (${when {
+                            !item.isActive && isOneTime -> "Pagado"
                             daysLeft < 0 -> "Vencido"
                             daysLeft == 0 -> "Hoy"
                             daysLeft == 1 -> "Mañana"
