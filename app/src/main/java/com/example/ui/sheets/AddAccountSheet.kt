@@ -2,8 +2,6 @@ package com.example.ui.sheets
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,14 +13,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccountBalanceWallet
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -30,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -37,15 +39,24 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
+import com.example.ui.components.FinanceComboBox
 import com.example.ui.components.accountTypeIcon
+import com.example.util.FinanceFormatters
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+private data class DisbursementOption(
+    val account: AccountEntity?,
+    val label: String,
+    val subtitle: String? = null,
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddAccountSheet(
+    existingAccounts: List<AccountEntity>,
     editingAccount: AccountEntity? = null,
     initialType: AccountType = AccountType.DEBIT,
     onDismiss: () -> Unit,
-    onSave: (AccountEntity) -> Unit,
+    onSave: (AccountEntity, Boolean) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -104,6 +115,28 @@ fun AddAccountSheet(
         )
     }
     var counterpartyName by remember { mutableStateOf(editingAccount?.counterpartyName.orEmpty()) }
+
+    val disbursementCandidates = remember(existingAccounts, selectedType, editingAccount) {
+        existingAccounts.filter { acc ->
+            acc.id != editingAccount?.id && when (selectedType) {
+                AccountType.BANK_LOAN -> acc.accountType.isLiquidAsset
+                AccountType.LENT_LOAN -> acc.accountType.isLiquidAsset || acc.accountType == AccountType.CREDIT
+                else -> false
+            }
+        }
+    }
+
+    var linkedAccountId by remember(disbursementCandidates, editingAccount) {
+        val initial = editingAccount?.linkedAccountId?.takeIf { id ->
+            disbursementCandidates.any { it.id == id }
+        } ?: if (editingAccount == null) disbursementCandidates.firstOrNull()?.id else null
+        mutableStateOf(initial)
+    }
+
+    var applyDisbursementNow by remember(editingAccount) {
+        mutableStateOf(editingAccount == null)
+    }
+
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(
@@ -125,30 +158,18 @@ fun AddAccountSheet(
             )
 
             if (editingAccount == null) {
-                Text(
-                    text = "Tipo de producto",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                FinanceComboBox(
+                    label = "Tipo de producto",
+                    options = AccountType.entries,
+                    selectedOption = selectedType,
+                    optionLabel = { it.labelEs },
+                    optionLeadingIcon = { accountTypeIcon(it) },
+                    onOptionSelected = {
+                        selectedType = it
+                        errorMessage = null
+                    },
+                    testTag = "account_type_combobox",
                 )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    AccountType.entries.forEach { type ->
-                        FilterChip(
-                            selected = selectedType == type,
-                            onClick = { selectedType = type; errorMessage = null },
-                            label = { Text(type.shortLabelEs) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = accountTypeIcon(type),
-                                    contentDescription = null,
-                                )
-                            },
-                            modifier = Modifier.testTag("account_type_chip_${type.name.lowercase()}"),
-                        )
-                    }
-                }
             }
 
             OutlinedTextField(
@@ -157,7 +178,7 @@ fun AddAccountSheet(
                 label = {
                     Text(
                         when (selectedType) {
-                            AccountType.CREDIT -> "Nombre de la tarjeta (ej. BBVA Azul)"
+                            AccountType.CREDIT -> "Nombre de la tarjeta (ej. EMMA, Visa Gold)"
                             AccountType.DEBIT -> "Nombre de la tarjeta de débito"
                             AccountType.SAVINGS -> "Nombre de la cuenta de ahorro"
                             AccountType.BANK_LOAN -> "Nombre del préstamo bancario"
@@ -167,6 +188,7 @@ fun AddAccountSheet(
                     )
                 },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -183,6 +205,7 @@ fun AddAccountSheet(
                         onValueChange = { institution = it },
                         label = { Text("Banco / Institución") },
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                         modifier = Modifier.weight(1.4f),
                     )
@@ -192,6 +215,7 @@ fun AddAccountSheet(
                             onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) lastFour = it },
                             label = { Text("Últ. 4") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(0.8f),
                         )
@@ -205,6 +229,7 @@ fun AddAccountSheet(
                     onValueChange = { counterpartyName = it },
                     label = { Text("¿A quién le prestaste?") },
                     singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -224,6 +249,7 @@ fun AddAccountSheet(
                     )
                 },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -237,6 +263,7 @@ fun AddAccountSheet(
                         onValueChange = { savingsGoalText = sanitizeDecimal(it) },
                         label = { Text("Meta de ahorro (opcional, $)") },
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -248,6 +275,7 @@ fun AddAccountSheet(
                         onValueChange = { creditLimitText = sanitizeDecimal(it); errorMessage = null },
                         label = { Text("Límite de crédito ($)") },
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -262,6 +290,7 @@ fun AddAccountSheet(
                             onValueChange = { if (it.length <= 2 && it.all(Char::isDigit)) cutoffDayText = it },
                             label = { Text("Día de corte (1–31)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier
                                 .weight(1f)
@@ -272,6 +301,7 @@ fun AddAccountSheet(
                             onValueChange = { if (it.length <= 2 && it.all(Char::isDigit)) dueDayText = it },
                             label = { Text("Día de pago (1–31)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier
                                 .weight(1f)
@@ -283,6 +313,7 @@ fun AddAccountSheet(
                         onValueChange = { interestRateText = sanitizeDecimal(it) },
                         label = { Text("Tasa anual % (opcional)") },
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -298,6 +329,7 @@ fun AddAccountSheet(
                             onValueChange = { originalPrincipalText = sanitizeDecimal(it) },
                             label = { Text("Monto original ($)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f),
                         )
@@ -306,6 +338,7 @@ fun AddAccountSheet(
                             onValueChange = { monthlyInstallmentText = sanitizeDecimal(it) },
                             label = { Text("Cuota mensual ($)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f),
                         )
@@ -319,6 +352,7 @@ fun AddAccountSheet(
                             onValueChange = { if (it.length <= 2 && it.all(Char::isDigit)) dueDayText = it },
                             label = { Text("Día de pago (1–31)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f),
                         )
@@ -327,10 +361,20 @@ fun AddAccountSheet(
                             onValueChange = { interestRateText = sanitizeDecimal(it) },
                             label = { Text("Tasa anual %") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    LoanDisbursementSection(
+                        isLent = false,
+                        isNewLoan = editingAccount == null,
+                        candidates = disbursementCandidates,
+                        selectedAccountId = linkedAccountId,
+                        applyDisbursementNow = applyDisbursementNow,
+                        onSelectAccount = { linkedAccountId = it },
+                        onToggleApplyNow = { applyDisbursementNow = it },
+                    )
                 }
 
                 AccountType.LENT_LOAN -> {
@@ -343,6 +387,7 @@ fun AddAccountSheet(
                             onValueChange = { originalPrincipalText = sanitizeDecimal(it) },
                             label = { Text("Monto prestado ($)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f),
                         )
@@ -351,10 +396,20 @@ fun AddAccountSheet(
                             onValueChange = { if (it.length <= 2 && it.all(Char::isDigit)) dueDayText = it },
                             label = { Text("Día de cobro (1–31)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    LoanDisbursementSection(
+                        isLent = true,
+                        isNewLoan = editingAccount == null,
+                        candidates = disbursementCandidates,
+                        selectedAccountId = linkedAccountId,
+                        applyDisbursementNow = applyDisbursementNow,
+                        onSelectAccount = { linkedAccountId = it },
+                        onToggleApplyNow = { applyDisbursementNow = it },
+                    )
                 }
 
                 else -> Unit
@@ -400,6 +455,10 @@ fun AddAccountSheet(
                         val monthly = monthlyInstallmentText.toDoubleOrNull() ?: 0.0
                         val rate = interestRateText.toDoubleOrNull() ?: 0.0
                         val goal = savingsGoalText.toDoubleOrNull() ?: 0.0
+                        val resolvedLinkedId = if (selectedType == AccountType.BANK_LOAN || selectedType == AccountType.LENT_LOAN) {
+                            linkedAccountId
+                        } else null
+                        val shouldDisburse = editingAccount == null && resolvedLinkedId != null && applyDisbursementNow
 
                         onSave(
                             AccountEntity(
@@ -417,9 +476,11 @@ fun AddAccountSheet(
                                 interestRate = rate,
                                 savingsGoal = goal,
                                 counterpartyName = counterpartyName.trim(),
+                                linkedAccountId = resolvedLinkedId,
                                 colorIndex = editingAccount?.colorIndex ?: selectedType.ordinal,
                                 createdAt = editingAccount?.createdAt ?: System.currentTimeMillis(),
-                            )
+                            ),
+                            shouldDisburse,
                         )
                     },
                     shape = RoundedCornerShape(14.dp),
@@ -432,6 +493,97 @@ fun AddAccountSheet(
             }
 
             Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun LoanDisbursementSection(
+    isLent: Boolean,
+    isNewLoan: Boolean,
+    candidates: List<AccountEntity>,
+    selectedAccountId: Long?,
+    applyDisbursementNow: Boolean,
+    onSelectAccount: (Long?) -> Unit,
+    onToggleApplyNow: (Boolean) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (candidates.isEmpty()) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = "Aún no tienes cuentas de ahorro, débito o efectivo registradas. Puedes guardar el préstamo ahora y asociar la cuenta más tarde.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+        } else {
+            val options = remember(candidates) {
+                listOf(DisbursementOption(null, "Sin asociar", "Solo llevar control del préstamo")) +
+                    candidates.map { acc ->
+                        DisbursementOption(
+                            account = acc,
+                            label = acc.name,
+                            subtitle = "${acc.accountType.shortLabelEs} · Saldo ${FinanceFormatters.currency(acc.balance)}",
+                        )
+                    }
+            }
+            val selectedOption = options.firstOrNull { it.account?.id == selectedAccountId } ?: options.first()
+
+            FinanceComboBox(
+                label = if (isLent) "Cuenta de donde sale el desembolso" else "Cuenta donde se realiza el desembolso",
+                options = options,
+                selectedOption = selectedOption,
+                optionLabel = { it.label },
+                optionSubtitle = { it.subtitle },
+                optionLeadingIcon = { opt ->
+                    opt.account?.let { accountTypeIcon(it.accountType) } ?: Icons.Rounded.Block
+                },
+                onOptionSelected = { onSelectAccount(it.account?.id) },
+                testTag = "loan_disbursement_combobox",
+            )
+
+            if (isNewLoan && selectedAccountId != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isLent) "Descontar desembolso ahora" else "Depositar desembolso ahora",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = if (isLent) {
+                                    "Descuenta el monto prestado de esta cuenta y crea el movimiento."
+                                } else {
+                                    "Suma el monto recibido al saldo de esta cuenta y crea el movimiento."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = applyDisbursementNow,
+                            onCheckedChange = onToggleApplyNow,
+                            modifier = Modifier.testTag("loan_apply_disbursement_switch"),
+                        )
+                    }
+                }
+            }
         }
     }
 }

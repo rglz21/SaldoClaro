@@ -55,15 +55,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.model.AccountEntity
 import com.example.data.model.ScheduledPaymentEntity
+import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
 import com.example.ui.components.EmptyFinanceCard
 import com.example.ui.components.LocalStorageNoticeBanner
 import com.example.ui.components.PillBadge
 import com.example.ui.components.QuickActionTile
 import com.example.ui.components.SectionHeader
-import com.example.ui.components.categoryColor
-import com.example.ui.components.categoryIcon
+import com.example.ui.components.categoryColorByName
+import com.example.ui.components.categoryIconByName
+import com.example.ui.components.isLoanRepaymentCollection
 import com.example.ui.sheets.MovementSheetMode
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalFinanceColors
@@ -71,6 +74,7 @@ import com.example.ui.viewmodel.CreditCardSummary
 import com.example.ui.viewmodel.FinanceUiState
 import com.example.util.DateMath
 import com.example.util.FinanceFormatters
+import java.util.Locale
 
 @Composable
 fun DashboardScreen(
@@ -80,12 +84,17 @@ fun DashboardScreen(
     onOpenAddAccount: () -> Unit,
     onNavigateToAccounts: () -> Unit,
     onNavigateToTransactions: () -> Unit,
+    onNavigateToCalendar: () -> Unit,
     onNavigateToScheduled: () -> Unit,
     onPayScheduledNow: (ScheduledPaymentEntity) -> Unit,
+    onAccountClick: (AccountEntity) -> Unit,
+    onScheduledClick: (ScheduledPaymentEntity) -> Unit,
+    onTransactionClick: (TransactionEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val financeColors = LocalFinanceColors.current
     val accountMap = state.accounts.associateBy { it.id }
+    val categoryMap = state.categories.associateBy { it.name.lowercase(Locale.ROOT) }
     val activeUpcoming = state.scheduledPayments.filter { it.isActive }.take(3)
     val recentTransactions = state.transactions.take(5)
 
@@ -147,12 +156,13 @@ fun DashboardScreen(
             }
         }
 
-        // Monthly Cashflow Strip
+        // Monthly Cashflow Strip (tappable to jump into Calendar view)
         item {
             MonthlyCashflowCard(
                 monthIncome = state.monthIncome,
                 monthExpense = state.monthExpense,
                 hideBalances = state.hideBalances,
+                onOpenCalendar = onNavigateToCalendar,
             )
         }
 
@@ -183,6 +193,7 @@ fun DashboardScreen(
                 DashboardCreditCardRow(
                     summary = summary,
                     hideBalances = state.hideBalances,
+                    onCardClick = { onAccountClick(summary.card) },
                     onPayClick = {
                         val defaultSource = state.accounts.firstOrNull { it.accountType.isLiquidAsset }?.id
                         onOpenMovementSheet(MovementSheetMode.TRANSFER, defaultSource, summary.card.id)
@@ -191,10 +202,10 @@ fun DashboardScreen(
             }
         }
 
-        // Upcoming Scheduled Payments & Subscriptions
+        // Upcoming Scheduled Payments, Subscriptions & Recurring Incomes
         item {
             SectionHeader(
-                title = "Próximos pagos y suscripciones",
+                title = "Próximos pagos e ingresos",
                 actionLabel = "Ver todos",
                 onActionClick = onNavigateToScheduled,
             )
@@ -242,11 +253,15 @@ fun DashboardScreen(
             items(activeUpcoming, key = { "sched_${it.id}" }) { item ->
                 val accountName = accountMap[item.accountId]?.name ?: "Cuenta"
                 val daysLeft = DateMath.daysBetween(System.currentTimeMillis(), item.nextDueDateMillis)
+                val isInc = item.recurringKind.isIncome
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     shape = MaterialTheme.shapes.medium,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.medium)
+                        .clickable { onScheduledClick(item) },
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -262,6 +277,7 @@ fun DashboardScreen(
                                     style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
                                 )
                                 PillBadge(
                                     text = when {
@@ -270,8 +286,16 @@ fun DashboardScreen(
                                         daysLeft == 1 -> "Mañana"
                                         else -> "En $daysLeft días"
                                     },
-                                    containerColor = if (daysLeft <= 3) financeColors.warningContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = if (daysLeft <= 3) financeColors.warning else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    containerColor = when {
+                                        isInc -> financeColors.incomeContainer
+                                        daysLeft <= 3 -> financeColors.warningContainer
+                                        else -> MaterialTheme.colorScheme.surfaceVariant
+                                    },
+                                    contentColor = when {
+                                        isInc -> financeColors.income
+                                        daysLeft <= 3 -> financeColors.warning
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
                                 )
                             }
                             Spacer(Modifier.height(2.dp))
@@ -284,18 +308,21 @@ fun DashboardScreen(
                         Spacer(Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = FinanceFormatters.currency(item.amount, state.hideBalances),
+                                text = (if (isInc) "+" else "") + FinanceFormatters.currency(item.amount, state.hideBalances),
                                 style = MaterialTheme.typography.titleSmall.copy(fontFamily = JetBrainsMono),
                                 fontWeight = FontWeight.Bold,
+                                color = if (isInc) financeColors.income else MaterialTheme.colorScheme.onSurface,
                             )
                             Spacer(Modifier.height(4.dp))
                             Button(
                                 onClick = { onPayScheduledNow(item) },
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                 shape = RoundedCornerShape(10.dp),
+                                colors = if (isInc) ButtonDefaults.buttonColors(containerColor = financeColors.income)
+                                else ButtonDefaults.buttonColors(),
                                 modifier = Modifier.height(32.dp),
                             ) {
-                                Text("Pagar", style = MaterialTheme.typography.labelSmall)
+                                Text(if (isInc) "Recibir" else "Pagar", style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
@@ -323,21 +350,27 @@ fun DashboardScreen(
             items(recentTransactions, key = { "tx_${it.id}" }) { tx ->
                 val srcName = accountMap[tx.accountId]?.name ?: "Cuenta"
                 val dstName = tx.destinationAccountId?.let { accountMap[it]?.name }
-                val amountColor = when (tx.transactionType) {
-                    TransactionType.INCOME -> financeColors.income
-                    TransactionType.EXPENSE -> financeColors.expense
-                    TransactionType.TRANSFER -> financeColors.transfer
+                val isLoanCol = isLoanRepaymentCollection(tx, accountMap)
+                val amountColor = when {
+                    tx.transactionType == TransactionType.INCOME || isLoanCol -> financeColors.income
+                    tx.transactionType == TransactionType.EXPENSE -> financeColors.expense
+                    else -> financeColors.transfer
                 }
-                val prefix = when (tx.transactionType) {
-                    TransactionType.INCOME -> "+"
-                    TransactionType.EXPENSE -> "-"
-                    TransactionType.TRANSFER -> ""
+                val prefix = when {
+                    tx.transactionType == TransactionType.INCOME || isLoanCol -> "+"
+                    tx.transactionType == TransactionType.EXPENSE -> "-"
+                    else -> ""
                 }
+                val catMeta = categoryMap[tx.categoryLabel.lowercase(Locale.ROOT)]
+                val catColor = categoryColorByName(tx.categoryLabel, catMeta?.colorIndex)
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     shape = MaterialTheme.shapes.medium,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.medium)
+                        .clickable { onTransactionClick(tx) },
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -347,13 +380,13 @@ fun DashboardScreen(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(categoryColor(tx.financeCategory).copy(alpha = 0.14f)),
+                                .background(catColor.copy(alpha = 0.14f)),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                imageVector = categoryIcon(tx.financeCategory),
+                                imageVector = categoryIconByName(tx.categoryLabel, catMeta?.iconKey),
                                 contentDescription = null,
-                                tint = categoryColor(tx.financeCategory),
+                                tint = catColor,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -366,8 +399,11 @@ fun DashboardScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = if (dstName != null) "$srcName → $dstName"
-                                else "$srcName · ${FinanceFormatters.shortDate(tx.dateMillis)}",
+                                text = when {
+                                    isLoanCol && dstName != null -> "Cobro → $dstName (a favor)"
+                                    dstName != null -> "$srcName → $dstName"
+                                    else -> "$srcName · ${FinanceFormatters.shortDate(tx.dateMillis)}"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -526,11 +562,15 @@ private fun MonthlyCashflowCard(
     monthIncome: Double,
     monthExpense: Double,
     hideBalances: Boolean,
+    onOpenCalendar: () -> Unit,
 ) {
     val financeColors = LocalFinanceColors.current
     val balance = monthIncome - monthExpense
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenCalendar)
+            .testTag("dashboard_open_calendar_card"),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -541,11 +581,25 @@ private fun MonthlyCashflowCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "Flujo del mes · ${FinanceFormatters.monthYear(System.currentTimeMillis())}",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.CalendarMonth,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = "Flujo · ${FinanceFormatters.monthYear(System.currentTimeMillis())}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 PillBadge(
                     text = FinanceFormatters.currency(balance, hideBalances, showSign = true),
                     containerColor = if (balance >= 0) financeColors.incomeContainer else financeColors.expenseContainer,
@@ -584,6 +638,12 @@ private fun MonthlyCashflowCard(
                     )
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Toca para ver el calendario diario de gastos e ingresos",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }
@@ -592,11 +652,15 @@ private fun MonthlyCashflowCard(
 private fun DashboardCreditCardRow(
     summary: CreditCardSummary,
     hideBalances: Boolean,
+    onCardClick: () -> Unit,
     onPayClick: () -> Unit,
 ) {
     val financeColors = LocalFinanceColors.current
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .clickable(onClick = onCardClick),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),

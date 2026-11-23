@@ -2,8 +2,6 @@ package com.example.ui.sheets
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,30 +13,32 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AssistChip
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.EventRepeat
+import androidx.compose.material.icons.rounded.Subscriptions
+import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -46,17 +46,21 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
-import com.example.data.model.FinanceCategory
+import com.example.data.model.CategoryEntity
 import com.example.data.model.RecurrenceFrequency
 import com.example.data.model.RecurringKind
 import com.example.data.model.ScheduledPaymentEntity
+import com.example.ui.components.FinanceComboBox
+import com.example.ui.components.accountTypeIcon
+import com.example.ui.components.categoryIconByName
 import com.example.util.DateMath
 import com.example.util.FinanceFormatters
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddScheduledSheet(
     accounts: List<AccountEntity>,
+    categories: List<CategoryEntity>,
     editingPayment: ScheduledPaymentEntity? = null,
     initialKind: RecurringKind = RecurringKind.SUBSCRIPTION,
     onDismiss: () -> Unit,
@@ -64,16 +68,25 @@ fun AddScheduledSheet(
     onSave: (ScheduledPaymentEntity) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val eligibleAccounts = remember(accounts) {
-        accounts.filter {
-            it.accountType == AccountType.SAVINGS ||
-                it.accountType == AccountType.DEBIT ||
-                it.accountType == AccountType.CREDIT ||
-                it.accountType == AccountType.CASH
+    var kind by remember { mutableStateOf(editingPayment?.recurringKind ?: initialKind) }
+
+    val eligibleAccounts = remember(accounts, kind) {
+        if (kind.isIncome) {
+            accounts.filter { it.accountType.isLiquidAsset }
+        } else {
+            accounts.filter {
+                it.accountType == AccountType.SAVINGS ||
+                    it.accountType == AccountType.DEBIT ||
+                    it.accountType == AccountType.CREDIT ||
+                    it.accountType == AccountType.CASH
+            }
         }
     }
+    val availableCategories = remember(categories, kind) {
+        val filtered = categories.filter { it.isIncome == kind.isIncome }
+        if (filtered.isNotEmpty()) filtered else categories
+    }
 
-    var kind by remember { mutableStateOf(editingPayment?.recurringKind ?: initialKind) }
     var name by remember { mutableStateOf(editingPayment?.name.orEmpty()) }
     var amountText by remember {
         mutableStateOf(
@@ -81,23 +94,33 @@ fun AddScheduledSheet(
             else ""
         )
     }
-    var selectedAccountId by remember(eligibleAccounts) {
+    var selectedAccountId by remember {
         mutableStateOf(
             editingPayment?.accountId?.takeIf { id -> eligibleAccounts.any { it.id == id } }
                 ?: eligibleAccounts.firstOrNull()?.id
         )
     }
+    LaunchedEffect(eligibleAccounts) {
+        if (selectedAccountId == null || eligibleAccounts.none { it.id == selectedAccountId }) {
+            selectedAccountId = eligibleAccounts.firstOrNull()?.id
+        }
+    }
+
     var frequency by remember {
         mutableStateOf(editingPayment?.recurrenceFrequency ?: RecurrenceFrequency.MONTHLY)
     }
     var nextDueDateMillis by remember {
         mutableLongStateOf(editingPayment?.nextDueDateMillis ?: DateMath.dateFromDayOfMonth(1))
     }
-    var category by remember(kind) {
-        mutableStateOf(
-            editingPayment?.financeCategory
-                ?: if (kind == RecurringKind.SUBSCRIPTION) FinanceCategory.SUBSCRIPTIONS else FinanceCategory.UTILITIES
-        )
+    var selectedCategory by remember(availableCategories, kind, editingPayment) {
+        val targetName = editingPayment?.categoryLabel ?: when (kind) {
+            RecurringKind.SUBSCRIPTION -> "Suscripciones"
+            RecurringKind.RECURRING_BILL -> "Servicios"
+            RecurringKind.RECURRING_INCOME -> "Salario"
+        }
+        val match = availableCategories.firstOrNull { it.name.equals(targetName, ignoreCase = true) }
+            ?: availableCategories.firstOrNull()
+        mutableStateOf(match)
     }
     var notes by remember { mutableStateOf(editingPayment?.notes.orEmpty()) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -109,7 +132,7 @@ fun AddScheduledSheet(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    pickerState.selectedDateMillis?.let { nextDueDateMillis = it }
+                    pickerState.selectedDateMillis?.let { nextDueDateMillis = it + 43_200_000L }
                     showDatePicker = false
                 }) { Text("Elegir") }
             },
@@ -135,28 +158,32 @@ fun AddScheduledSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = if (editingPayment == null) "Programar pago" else "Editar pago programado",
+                text = when {
+                    editingPayment != null && kind.isIncome -> "Editar ingreso frecuente"
+                    editingPayment != null -> "Editar pago programado"
+                    kind.isIncome -> "Programar ingreso frecuente"
+                    else -> "Programar pago o suscripción"
+                },
                 style = MaterialTheme.typography.headlineSmall,
             )
 
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                RecurringKind.entries.forEachIndexed { idx, item ->
-                    SegmentedButton(
-                        selected = kind == item,
-                        onClick = {
-                            kind = item
-                            category = if (item == RecurringKind.SUBSCRIPTION) {
-                                FinanceCategory.SUBSCRIPTIONS
-                            } else {
-                                FinanceCategory.UTILITIES
-                            }
-                        },
-                        shape = SegmentedButtonDefaults.itemShape(idx, RecurringKind.entries.size),
-                    ) {
-                        Text(item.labelEs)
+            FinanceComboBox(
+                label = "Tipo de movimiento recurrente",
+                options = RecurringKind.entries,
+                selectedOption = kind,
+                optionLabel = { it.labelEs },
+                optionLeadingIcon = {
+                    when (it) {
+                        RecurringKind.SUBSCRIPTION -> Icons.Rounded.Subscriptions
+                        RecurringKind.RECURRING_BILL -> Icons.Rounded.Bolt
+                        RecurringKind.RECURRING_INCOME -> Icons.Rounded.TrendingUp
                     }
-                }
-            }
+                },
+                onOptionSelected = { newKind ->
+                    kind = newKind
+                },
+                testTag = "scheduled_kind_combobox",
+            )
 
             if (eligibleAccounts.isEmpty()) {
                 Surface(
@@ -169,7 +196,11 @@ fun AddScheduledSheet(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Text(
-                            text = "Primero agrega una cuenta de ahorro, tarjeta de débito o crédito para domiciliar tus pagos.",
+                            text = if (kind.isIncome) {
+                                "Primero agrega una cuenta de ahorro, débito o efectivo donde recibir tus ingresos."
+                            } else {
+                                "Primero agrega una cuenta de ahorro, tarjeta de débito o crédito para domiciliar tus pagos."
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Button(
@@ -187,31 +218,47 @@ fun AddScheduledSheet(
                 return@Column
             }
 
-            // Quick presets for fast entry
-            val presets = if (kind == RecurringKind.SUBSCRIPTION) {
-                listOf("Netflix", "Spotify", "YouTube Premium", "Amazon Prime", "iCloud+", "Gimnasio")
-            } else {
-                listOf("Renta", "Luz", "Internet", "Agua", "Telefonía", "Seguro")
-            }
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                presets.forEach { preset ->
-                    AssistChip(
-                        onClick = { name = preset; errorMessage = null },
-                        label = { Text(preset) },
+            if (editingPayment == null) {
+                val presets = when (kind) {
+                    RecurringKind.SUBSCRIPTION -> listOf(
+                        "Personalizado", "Netflix", "Spotify", "YouTube Premium", "Amazon Prime", "Google One", "iCloud+", "Gimnasio"
+                    )
+                    RecurringKind.RECURRING_BILL -> listOf(
+                        "Personalizado", "Renta", "Luz", "Internet", "Agua", "Telefonía", "Universidad", "Seguro"
+                    )
+                    RecurringKind.RECURRING_INCOME -> listOf(
+                        "Personalizado", "Pago de salario", "Quincena", "Servicios profesionales", "Freelance", "Alquiler cobrado", "Rendimientos / Intereses", "Bono"
                     )
                 }
+                FinanceComboBox(
+                    label = if (kind.isIncome) "Plantilla de ingreso (opcional)" else "Servicio o plantilla rápida (opcional)",
+                    options = presets,
+                    selectedOption = presets.firstOrNull { it.equals(name, ignoreCase = true) } ?: "Personalizado",
+                    optionLabel = { it },
+                    onOptionSelected = { chosen ->
+                        if (chosen != "Personalizado") {
+                            name = chosen
+                            errorMessage = null
+                        }
+                    },
+                    testTag = "scheduled_preset_combobox",
+                )
             }
 
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it; errorMessage = null },
                 label = {
-                    Text(if (kind == RecurringKind.SUBSCRIPTION) "Nombre de la suscripción" else "Nombre del pago frecuente")
+                    Text(
+                        when (kind) {
+                            RecurringKind.SUBSCRIPTION -> "Nombre de la suscripción"
+                            RecurringKind.RECURRING_BILL -> "Nombre del pago frecuente"
+                            RecurringKind.RECURRING_INCOME -> "Nombre del ingreso frecuente"
+                        }
+                    )
                 },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -221,57 +268,56 @@ fun AddScheduledSheet(
             OutlinedTextField(
                 value = amountText,
                 onValueChange = { amountText = sanitizeDecimal(it); errorMessage = null },
-                label = { Text("Monto por cobro ($)") },
+                label = { Text(if (kind.isIncome) "Monto por ingreso ($)" else "Monto por cobro ($)") },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("scheduled_amount_input"),
             )
 
-            Text(
-                text = "Cuenta o tarjeta asociada",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            FinanceComboBox(
+                label = if (kind.isIncome) "Cuenta donde ingresa el dinero" else "Cuenta o tarjeta asociada",
+                options = eligibleAccounts,
+                selectedOption = eligibleAccounts.firstOrNull { it.id == selectedAccountId },
+                optionLabel = { it.name },
+                optionSubtitle = { "${it.accountType.shortLabelEs} · ${FinanceFormatters.currency(it.balance)}" },
+                optionLeadingIcon = { accountTypeIcon(it.accountType) },
+                onOptionSelected = { selectedAccountId = it.id },
+                testTag = "scheduled_account_combobox",
             )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                eligibleAccounts.forEach { acc ->
-                    FilterChip(
-                        selected = selectedAccountId == acc.id,
-                        onClick = { selectedAccountId = acc.id },
-                        label = { Text("${acc.name} (${acc.accountType.shortLabelEs})") },
-                    )
-                }
+
+            if (availableCategories.isNotEmpty()) {
+                FinanceComboBox(
+                    label = "Categoría",
+                    options = availableCategories,
+                    selectedOption = selectedCategory,
+                    optionLabel = { it.name },
+                    optionLeadingIcon = { categoryIconByName(it.name, it.iconKey) },
+                    onOptionSelected = { selectedCategory = it },
+                    testTag = "scheduled_category_combobox",
+                )
             }
 
-            Text(
-                text = "Frecuencia",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            FinanceComboBox(
+                label = "Frecuencia",
+                options = RecurrenceFrequency.entries,
+                selectedOption = frequency,
+                optionLabel = { it.labelEs },
+                optionLeadingIcon = { Icons.Rounded.EventRepeat },
+                onOptionSelected = { frequency = it },
+                testTag = "scheduled_frequency_combobox",
             )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                RecurrenceFrequency.entries.forEach { freq ->
-                    FilterChip(
-                        selected = frequency == freq,
-                        onClick = { frequency = freq },
-                        label = { Text(freq.labelEs) },
-                    )
-                }
-            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Próxima fecha de cobro",
+                        text = if (kind.isIncome) "Próxima fecha de ingreso" else "Próxima fecha de cobro",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -280,7 +326,7 @@ fun AddScheduledSheet(
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
-                OutlinedButton(
+                Button(
                     onClick = { showDatePicker = true },
                     shape = RoundedCornerShape(12.dp),
                 ) {
@@ -293,6 +339,7 @@ fun AddScheduledSheet(
                 onValueChange = { notes = it },
                 label = { Text("Nota o referencia (opcional)") },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -333,6 +380,11 @@ fun AddScheduledSheet(
                             errorMessage = "Selecciona una cuenta o tarjeta."
                             return@Button
                         }
+                        val fallbackCat = when (kind) {
+                            RecurringKind.SUBSCRIPTION -> "Suscripciones"
+                            RecurringKind.RECURRING_BILL -> "Servicios"
+                            RecurringKind.RECURRING_INCOME -> "Salario"
+                        }
                         onSave(
                             ScheduledPaymentEntity(
                                 id = editingPayment?.id ?: 0L,
@@ -340,7 +392,7 @@ fun AddScheduledSheet(
                                 kind = kind.name,
                                 amount = amount,
                                 accountId = accountId,
-                                category = category.name,
+                                category = selectedCategory?.name ?: fallbackCat,
                                 frequency = frequency.name,
                                 nextDueDateMillis = nextDueDateMillis,
                                 isActive = editingPayment?.isActive ?: true,

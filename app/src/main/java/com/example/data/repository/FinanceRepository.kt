@@ -1,13 +1,13 @@
 package com.example.data.repository
 
+import android.content.Context
 import androidx.room.withTransaction
 import com.example.data.local.FinanceDatabase
+import com.example.data.local.InitialDataSeeder
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
-import com.example.data.model.BudgetEntity
-import com.example.data.model.FinanceCategory
+import com.example.data.model.CategoryEntity
 import com.example.data.model.InstallmentPlanEntity
-import com.example.data.model.RecurrenceFrequency
 import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
@@ -22,7 +22,11 @@ class FinanceRepository(private val database: FinanceDatabase) {
     val transactions: Flow<List<TransactionEntity>> = dao.observeTransactions()
     val installmentPlans: Flow<List<InstallmentPlanEntity>> = dao.observeInstallmentPlans()
     val scheduledPayments: Flow<List<ScheduledPaymentEntity>> = dao.observeScheduledPayments()
-    val budgets: Flow<List<BudgetEntity>> = dao.observeBudgets()
+    val categories: Flow<List<CategoryEntity>> = dao.observeCategories()
+
+    suspend fun ensureSeeded(context: Context) {
+        InitialDataSeeder.seedIfNeeded(context, database)
+    }
 
     suspend fun saveAccount(account: AccountEntity): Long {
         return dao.insertAccount(account)
@@ -30,6 +34,75 @@ class FinanceRepository(private val database: FinanceDatabase) {
 
     suspend fun updateAccount(account: AccountEntity) {
         dao.updateAccount(account)
+    }
+
+    suspend fun saveLoanWithDisbursement(
+        loan: AccountEntity,
+        applyDisbursementNow: Boolean,
+        dateMillis: Long = System.currentTimeMillis(),
+    ): Long {
+        return database.withTransaction {
+            val loanId = dao.insertAccount(loan)
+            val linkedId = loan.linkedAccountId
+            val amount = if (loan.originalPrincipal > 0.0) loan.originalPrincipal else loan.balance
+
+            if (applyDisbursementNow && linkedId != null && amount > 0.0) {
+                val linkedAccount = dao.getAccountById(linkedId)
+                if (linkedAccount != null) {
+                    when (loan.accountType) {
+                        AccountType.BANK_LOAN -> {
+                            val newLinkedBalance = computeTransferDestinationBalance(
+                                currentBalance = linkedAccount.balance,
+                                accountType = linkedAccount.accountType,
+                                amount = amount,
+                            )
+                            dao.updateAccount(linkedAccount.copy(balance = newLinkedBalance))
+                            dao.insertTransaction(
+                                TransactionEntity(
+                                    title = "Desembolso · ${loan.name}",
+                                    amount = amount,
+                                    type = TransactionType.TRANSFER.name,
+                                    category = "Desembolso de Préstamo",
+                                    accountId = loanId,
+                                    destinationAccountId = linkedAccount.id,
+                                    dateMillis = dateMillis,
+                                    note = "Desembolso de préstamo bancario en ${linkedAccount.name}",
+                                )
+                            )
+                        }
+
+                        AccountType.LENT_LOAN -> {
+                            val newLinkedBalance = computeTransferSourceBalance(
+                                currentBalance = linkedAccount.balance,
+                                accountType = linkedAccount.accountType,
+                                amount = amount,
+                            )
+                            dao.updateAccount(linkedAccount.copy(balance = newLinkedBalance))
+                            dao.insertTransaction(
+                                TransactionEntity(
+                                    title = "Desembolso · ${loan.name}",
+                                    amount = amount,
+                                    type = TransactionType.TRANSFER.name,
+                                    category = "Desembolso de Préstamo",
+                                    accountId = linkedAccount.id,
+                                    destinationAccountId = loanId,
+                                    dateMillis = dateMillis,
+                                    note = buildString {
+                                        append("Préstamo realizado desde ${linkedAccount.name}")
+                                        if (loan.counterpartyName.isNotBlank()) {
+                                            append(" a ${loan.counterpartyName}")
+                                        }
+                                    },
+                                )
+                            )
+                        }
+
+                        else -> Unit
+                    }
+                }
+            }
+            loanId
+        }
     }
 
     suspend fun deleteAccount(accountId: Long) {
@@ -45,7 +118,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
         title: String,
         amount: Double,
         type: TransactionType,
-        category: FinanceCategory,
+        categoryName: String,
         accountId: Long,
         dateMillis: Long,
         note: String,
@@ -66,7 +139,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
                     title = title.trim(),
                     amount = amount,
                     type = type.name,
-                    category = category.name,
+                    category = categoryName.trim().ifEmpty { "Otros" },
                     accountId = accountId,
                     dateMillis = dateMillis,
                     note = note.trim(),
@@ -82,7 +155,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
         toAccountId: Long,
         dateMillis: Long,
         note: String,
-        categoryOverride: FinanceCategory? = null,
+        categoryOverride: String? = null,
     ) {
         require(amount > 0.0) { "El monto debe ser mayor a cero" }
         require(fromAccountId != toAccountId) { "Selecciona dos cuentas diferentes" }
@@ -99,10 +172,10 @@ class FinanceRepository(private val database: FinanceDatabase) {
             dao.updateAccount(destination.copy(balance = newDestBalance))
 
             val resolvedCategory = categoryOverride ?: when {
-                destination.accountType == AccountType.CREDIT -> FinanceCategory.CARD_PAYMENT
-                destination.accountType == AccountType.BANK_LOAN -> FinanceCategory.LOAN_PAYMENT
-                source.accountType == AccountType.LENT_LOAN -> FinanceCategory.LOAN_COLLECTION
-                else -> FinanceCategory.TRANSFER
+                destination.accountType == AccountType.CREDIT -> "Pago de Tarjeta"
+                destination.accountType == AccountType.BANK_LOAN -> "Pago de Préstamo"
+                source.accountType == AccountType.LENT_LOAN -> "Cobro de Préstamo"
+                else -> "Transferencia"
             }
 
             dao.insertTransaction(
@@ -110,7 +183,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
                     title = title.trim().ifEmpty { "${source.name} → ${destination.name}" },
                     amount = amount,
                     type = TransactionType.TRANSFER.name,
-                    category = resolvedCategory.name,
+                    category = resolvedCategory,
                     accountId = fromAccountId,
                     destinationAccountId = toAccountId,
                     dateMillis = dateMillis,
@@ -125,7 +198,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
         description: String,
         totalAmount: Double,
         totalMonths: Int,
-        category: FinanceCategory,
+        categoryName: String,
         startDateMillis: Long,
         note: String,
     ) {
@@ -138,6 +211,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
                 "Las compras a meses sin intereses requieren una tarjeta de crédito"
             }
 
+            val resolvedCategory = categoryName.trim().ifEmpty { "Compras" }
             val monthlyAmount = totalAmount / totalMonths.toDouble()
             val planId = dao.insertInstallmentPlan(
                 InstallmentPlanEntity(
@@ -147,11 +221,10 @@ class FinanceRepository(private val database: FinanceDatabase) {
                     totalMonths = totalMonths,
                     paidMonths = 0,
                     monthlyAmount = monthlyAmount,
-                    category = category.name,
+                    category = resolvedCategory,
                     startDateMillis = startDateMillis,
                 )
             )
-            // Increases total credit card balance owed
             dao.updateAccount(card.copy(balance = card.balance + totalAmount))
 
             dao.insertTransaction(
@@ -159,7 +232,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
                     title = "${description.trim()} (${totalMonths} MSI)",
                     amount = totalAmount,
                     type = TransactionType.EXPENSE.name,
-                    category = category.name,
+                    category = resolvedCategory,
                     accountId = creditCardId,
                     dateMillis = startDateMillis,
                     note = note.trim().ifEmpty { "Compra a $totalMonths meses sin intereses" },
@@ -195,7 +268,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
                     title = "Cuota $nextPaidMonths/${plan.totalMonths} · ${plan.description}",
                     amount = payAmount,
                     type = TransactionType.TRANSFER.name,
-                    category = FinanceCategory.CARD_PAYMENT.name,
+                    category = "Pago de Tarjeta",
                     accountId = fromAccountId,
                     destinationAccountId = card.id,
                     dateMillis = dateMillis,
@@ -262,10 +335,11 @@ class FinanceRepository(private val database: FinanceDatabase) {
         database.withTransaction {
             val account = dao.getAccountById(payment.accountId)
                 ?: error("Cuenta asociada no encontrada")
+            val txType = if (payment.recurringKind.isIncome) TransactionType.INCOME else TransactionType.EXPENSE
             val newBalance = computeNewBalanceForSingle(
                 currentBalance = account.balance,
                 accountType = account.accountType,
-                transactionType = TransactionType.EXPENSE,
+                transactionType = txType,
                 amount = payment.amount,
             )
             dao.updateAccount(account.copy(balance = newBalance))
@@ -273,8 +347,8 @@ class FinanceRepository(private val database: FinanceDatabase) {
                 TransactionEntity(
                     title = payment.name,
                     amount = payment.amount,
-                    type = TransactionType.EXPENSE.name,
-                    category = payment.category,
+                    type = txType.name,
+                    category = payment.categoryLabel,
                     accountId = payment.accountId,
                     dateMillis = paidAtMillis,
                     note = "${payment.recurringKind.labelEs} · ${payment.recurrenceFrequency.labelEs}",
@@ -286,13 +360,30 @@ class FinanceRepository(private val database: FinanceDatabase) {
         }
     }
 
-    suspend fun upsertBudget(category: FinanceCategory, monthlyLimit: Double) {
-        require(monthlyLimit > 0.0)
-        dao.upsertBudget(BudgetEntity(category = category.name, monthlyLimit = monthlyLimit))
+    // --- Categories & Budgets ---
+
+    suspend fun saveCategory(category: CategoryEntity): Long {
+        val cleanName = category.name.trim()
+        require(cleanName.isNotEmpty()) { "Ingresa un nombre para la categoría" }
+        val existingByName = dao.getCategoryByName(cleanName)
+        if (existingByName != null && existingByName.id != category.id) {
+            error("Ya existe una categoría llamada \"$cleanName\"")
+        }
+        return if (category.id == 0L) {
+            dao.insertCategory(category.copy(name = cleanName))
+        } else {
+            dao.updateCategory(category.copy(name = cleanName))
+            category.id
+        }
     }
 
-    suspend fun deleteBudget(category: FinanceCategory) {
-        dao.deleteBudget(category.name)
+    suspend fun updateCategoryBudget(categoryId: Long, monthlyBudget: Double) {
+        require(monthlyBudget >= 0.0) { "El presupuesto no puede ser negativo" }
+        dao.updateCategoryBudget(categoryId, monthlyBudget)
+    }
+
+    suspend fun deleteCategory(categoryId: Long) {
+        dao.deleteCategoryById(categoryId)
     }
 
     // --- Balance math helpers ---
@@ -303,12 +394,12 @@ class FinanceRepository(private val database: FinanceDatabase) {
         transactionType: TransactionType,
         amount: Double,
     ): Double = when (accountType) {
-        AccountType.CREDIT, AccountType.BANK_LOAN -> {
-            // Balance represents debt owed
+        AccountType.CREDIT, AccountType.BANK_LOAN, AccountType.LENT_LOAN -> {
+            // For loans & credit cards, an expense/disbursement increases the balance, while an income/repayment reduces it.
             if (transactionType == TransactionType.EXPENSE) currentBalance + amount
             else max(0.0, currentBalance - amount)
         }
-        AccountType.SAVINGS, AccountType.DEBIT, AccountType.CASH, AccountType.LENT_LOAN -> {
+        AccountType.SAVINGS, AccountType.DEBIT, AccountType.CASH -> {
             if (transactionType == TransactionType.INCOME) currentBalance + amount
             else currentBalance - amount
         }
@@ -320,11 +411,11 @@ class FinanceRepository(private val database: FinanceDatabase) {
         transactionType: TransactionType,
         amount: Double,
     ): Double = when (accountType) {
-        AccountType.CREDIT, AccountType.BANK_LOAN -> {
+        AccountType.CREDIT, AccountType.BANK_LOAN, AccountType.LENT_LOAN -> {
             if (transactionType == TransactionType.EXPENSE) max(0.0, currentBalance - amount)
             else currentBalance + amount
         }
-        AccountType.SAVINGS, AccountType.DEBIT, AccountType.CASH, AccountType.LENT_LOAN -> {
+        AccountType.SAVINGS, AccountType.DEBIT, AccountType.CASH -> {
             if (transactionType == TransactionType.INCOME) currentBalance - amount
             else currentBalance + amount
         }
@@ -335,8 +426,8 @@ class FinanceRepository(private val database: FinanceDatabase) {
         accountType: AccountType,
         amount: Double,
     ): Double = when (accountType) {
-        AccountType.CREDIT, AccountType.BANK_LOAN -> currentBalance + amount // cash advance increases debt
-        AccountType.LENT_LOAN -> max(0.0, currentBalance - amount)           // borrower paid you back
+        AccountType.CREDIT, AccountType.BANK_LOAN -> currentBalance + amount
+        AccountType.LENT_LOAN -> max(0.0, currentBalance - amount)
         AccountType.SAVINGS, AccountType.DEBIT, AccountType.CASH -> currentBalance - amount
     }
 
@@ -345,7 +436,7 @@ class FinanceRepository(private val database: FinanceDatabase) {
         accountType: AccountType,
         amount: Double,
     ): Double = when (accountType) {
-        AccountType.CREDIT, AccountType.BANK_LOAN -> max(0.0, currentBalance - amount) // paying off debt
+        AccountType.CREDIT, AccountType.BANK_LOAN -> max(0.0, currentBalance - amount)
         AccountType.SAVINGS, AccountType.DEBIT, AccountType.CASH, AccountType.LENT_LOAN -> currentBalance + amount
     }
 

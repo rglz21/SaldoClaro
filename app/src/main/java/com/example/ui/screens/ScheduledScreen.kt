@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,17 +20,22 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.EventRepeat
 import androidx.compose.material.icons.rounded.Subscriptions
+import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,6 +67,7 @@ import com.example.util.FinanceFormatters
 
 private enum class ScheduledFilter(val labelEs: String) {
     ALL("Todos"),
+    INCOMES("Ingresos frecuentes"),
     SUBSCRIPTIONS("Suscripciones"),
     BILLS("Pagos frecuentes"),
 }
@@ -70,6 +76,7 @@ private enum class ScheduledFilter(val labelEs: String) {
 fun ScheduledScreen(
     state: FinanceUiState,
     onAddScheduled: (RecurringKind) -> Unit,
+    onScheduledClick: (ScheduledPaymentEntity) -> Unit,
     onEditScheduled: (ScheduledPaymentEntity) -> Unit,
     onToggleScheduled: (ScheduledPaymentEntity) -> Unit,
     onDeleteScheduled: (ScheduledPaymentEntity) -> Unit,
@@ -85,6 +92,7 @@ fun ScheduledScreen(
     val filtered = remember(state.scheduledPayments, filter) {
         when (filter) {
             ScheduledFilter.ALL -> state.scheduledPayments
+            ScheduledFilter.INCOMES -> state.scheduledPayments.filter { it.recurringKind == RecurringKind.RECURRING_INCOME }
             ScheduledFilter.SUBSCRIPTIONS -> state.scheduledPayments.filter { it.recurringKind == RecurringKind.SUBSCRIPTION }
             ScheduledFilter.BILLS -> state.scheduledPayments.filter { it.recurringKind == RecurringKind.RECURRING_BILL }
         }
@@ -95,7 +103,7 @@ fun ScheduledScreen(
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("Eliminar ${target.name}") },
-            text = { Text("Se eliminará este pago programado. Los movimientos ya registrados se conservarán.") },
+            text = { Text("Se eliminará este registro programado. Los movimientos ya registrados se conservarán.") },
             confirmButton = {
                 TextButton(onClick = {
                     onDeleteScheduled(target)
@@ -110,12 +118,16 @@ fun ScheduledScreen(
         )
     }
 
+    val totalMonthlyOut = state.monthlySubscriptionsTotal + state.monthlyRecurringBillsTotal
+    val totalMonthlyIn = state.monthlyRecurringIncomeTotal
+    val recurringNet = totalMonthlyIn - totalMonthlyOut
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // Monthly Recurring Summary Card
+        // Monthly Recurring Summary Card (Ingresos frecuentes vs Pagos programados)
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -123,49 +135,87 @@ fun ScheduledScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
             ) {
                 Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "Compromiso mensual programado",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-                    )
-                    Text(
-                        text = FinanceFormatters.currency(
-                            state.monthlySubscriptionsTotal + state.monthlyRecurringBillsTotal,
-                            state.hideBalances,
-                        ),
-                        style = MaterialTheme.typography.displaySmall.copy(fontFamily = JetBrainsMono),
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Suscripciones / mes",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
+                                text = "Balance recurrente mensual",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
                             )
                             Text(
-                                text = FinanceFormatters.currency(state.monthlySubscriptionsTotal, state.hideBalances),
+                                text = FinanceFormatters.currency(recurringNet, state.hideBalances, showSign = true),
+                                style = MaterialTheme.typography.displaySmall.copy(fontFamily = JetBrainsMono),
+                                fontWeight = FontWeight.Bold,
+                                color = if (recurringNet >= 0) financeColors.income else financeColors.expense,
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.14f))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Ingresos frec. / mes",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
+                            )
+                            Text(
+                                text = "+${FinanceFormatters.currency(totalMonthlyIn, state.hideBalances)}",
                                 style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMono),
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = financeColors.income,
                             )
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Pagos frecuentes / mes",
+                                text = "Suscrip. + Pagos / mes",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
                             )
                             Text(
-                                text = FinanceFormatters.currency(state.monthlyRecurringBillsTotal, state.hideBalances),
+                                text = "-${FinanceFormatters.currency(totalMonthlyOut, state.hideBalances)}",
                                 style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMono),
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = financeColors.expense,
                             )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilledTonalButton(
+                            onClick = { onAddScheduled(RecurringKind.RECURRING_INCOME) },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("scheduled_add_income_button"),
+                        ) {
+                            Icon(Icons.Rounded.TrendingUp, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Ingreso frecuente", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                        }
+                        FilledTonalButton(
+                            onClick = { onAddScheduled(RecurringKind.SUBSCRIPTION) },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("scheduled_add_expense_button"),
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Pago / Suscripción", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                         }
                     }
                 }
@@ -180,6 +230,7 @@ fun ScheduledScreen(
                         selected = filter == item,
                         onClick = { filter = item },
                         label = { Text(item.labelEs) },
+                        modifier = Modifier.testTag("scheduled_filter_${item.name.lowercase()}"),
                     )
                 }
             }
@@ -187,16 +238,24 @@ fun ScheduledScreen(
 
         if (filtered.isEmpty()) {
             item {
+                val isIncomeFilter = filter == ScheduledFilter.INCOMES
                 EmptyFinanceCard(
-                    icon = Icons.Rounded.EventRepeat,
-                    title = "Sin pagos programados",
-                    subtitle = "Asocia tus suscripciones (Netflix, Spotify, etc.) y pagos frecuentes (renta, luz, internet) a tus cuentas o tarjetas.",
-                    actionLabel = "Programar suscripción o pago",
+                    icon = if (isIncomeFilter) Icons.Rounded.TrendingUp else Icons.Rounded.EventRepeat,
+                    title = if (isIncomeFilter) "Sin ingresos frecuentes" else "Sin movimientos programados",
+                    subtitle = if (isIncomeFilter) {
+                        "Registra tus ingresos recurrentes como salario, quincena, alquileres o honorarios para proyectar tu flujo mensual."
+                    } else {
+                        "Asocia tus suscripciones, pagos frecuentes e ingresos recurrentes a tus cuentas o tarjetas."
+                    },
+                    actionLabel = if (isIncomeFilter) "Programar ingreso frecuente" else "Programar suscripción o pago",
                     actionTestTag = "scheduled_empty_add_button",
                     onActionClick = {
                         onAddScheduled(
-                            if (filter == ScheduledFilter.BILLS) RecurringKind.RECURRING_BILL
-                            else RecurringKind.SUBSCRIPTION
+                            when (filter) {
+                                ScheduledFilter.INCOMES -> RecurringKind.RECURRING_INCOME
+                                ScheduledFilter.BILLS -> RecurringKind.RECURRING_BILL
+                                else -> RecurringKind.SUBSCRIPTION
+                            }
                         )
                     },
                 )
@@ -205,12 +264,31 @@ fun ScheduledScreen(
             items(filtered, key = { it.id }) { item ->
                 val account = accountMap[item.accountId]
                 val daysLeft = DateMath.daysBetween(System.currentTimeMillis(), item.nextDueDateMillis)
+                val isIncome = item.recurringKind.isIncome
                 val isSub = item.recurringKind == RecurringKind.SUBSCRIPTION
+
+                val iconBg = when {
+                    isIncome -> financeColors.incomeContainer
+                    isSub -> financeColors.transferContainer
+                    else -> financeColors.warningContainer
+                }
+                val iconTint = when {
+                    isIncome -> financeColors.income
+                    isSub -> financeColors.transfer
+                    else -> financeColors.warning
+                }
+                val iconVector = when (item.recurringKind) {
+                    RecurringKind.RECURRING_INCOME -> Icons.Rounded.TrendingUp
+                    RecurringKind.SUBSCRIPTION -> Icons.Rounded.Subscriptions
+                    RecurringKind.RECURRING_BILL -> Icons.Rounded.Bolt
+                }
 
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .alpha(if (item.isActive) 1f else 0.62f),
+                        .alpha(if (item.isActive) 1f else 0.62f)
+                        .clip(MaterialTheme.shapes.large)
+                        .clickable { onScheduledClick(item) },
                     shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -221,13 +299,13 @@ fun ScheduledScreen(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(if (isSub) financeColors.transferContainer else financeColors.warningContainer),
+                                    .background(iconBg),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
-                                    imageVector = if (isSub) Icons.Rounded.Subscriptions else Icons.Rounded.Bolt,
+                                    imageVector = iconVector,
                                     contentDescription = null,
-                                    tint = if (isSub) financeColors.transfer else financeColors.warning,
+                                    tint = iconTint,
                                 )
                             }
                             Spacer(Modifier.width(12.dp))
@@ -260,9 +338,10 @@ fun ScheduledScreen(
                         ) {
                             Column {
                                 Text(
-                                    text = FinanceFormatters.currency(item.amount, state.hideBalances),
+                                    text = (if (isIncome) "+" else "") + FinanceFormatters.currency(item.amount, state.hideBalances),
                                     style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMono),
                                     fontWeight = FontWeight.Bold,
+                                    color = if (isIncome) financeColors.income else MaterialTheme.colorScheme.onSurface,
                                 )
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -281,8 +360,16 @@ fun ScheduledScreen(
                                                 daysLeft == 1 -> "Mañana"
                                                 else -> "En ${daysLeft}d"
                                             },
-                                            containerColor = if (daysLeft <= 3) financeColors.expenseContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                            contentColor = if (daysLeft <= 3) financeColors.expense else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            containerColor = when {
+                                                isIncome -> financeColors.incomeContainer
+                                                daysLeft <= 3 -> financeColors.expenseContainer
+                                                else -> MaterialTheme.colorScheme.surfaceVariant
+                                            },
+                                            contentColor = when {
+                                                isIncome -> financeColors.income
+                                                daysLeft <= 3 -> financeColors.expense
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
                                         )
                                     }
                                 }
@@ -298,18 +385,23 @@ fun ScheduledScreen(
                                 onClick = { onPayNow(item) },
                                 enabled = item.isActive,
                                 shape = RoundedCornerShape(12.dp),
+                                colors = if (isIncome) {
+                                    ButtonDefaults.buttonColors(containerColor = financeColors.income)
+                                } else {
+                                    ButtonDefaults.buttonColors()
+                                },
                                 modifier = Modifier.testTag("pay_scheduled_${item.id}"),
                             ) {
                                 Icon(Icons.Rounded.CheckCircleOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Registrar pago hoy")
+                                Text(if (isIncome) "Registrar ingreso hoy" else "Registrar pago hoy")
                             }
                             Row {
                                 IconButton(onClick = { onEditScheduled(item) }) {
-                                    Icon(Icons.Rounded.Edit, contentDescription = "Editar pago programado")
+                                    Icon(Icons.Rounded.Edit, contentDescription = "Editar registro programado")
                                 }
                                 IconButton(onClick = { pendingDelete = item }) {
-                                    Icon(Icons.Rounded.DeleteOutline, contentDescription = "Eliminar pago programado")
+                                    Icon(Icons.Rounded.DeleteOutline, contentDescription = "Eliminar registro programado")
                                 }
                             }
                         }

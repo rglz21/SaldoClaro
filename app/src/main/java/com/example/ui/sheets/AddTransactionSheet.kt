@@ -2,8 +2,7 @@ package com.example.ui.sheets
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,15 +10,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CalendarToday
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -47,10 +50,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
-import com.example.data.model.FinanceCategory
+import com.example.data.model.CategoryEntity
 import com.example.data.model.TransactionType
-import com.example.ui.components.categoryIcon
+import com.example.ui.components.FinanceComboBox
+import com.example.ui.components.accountTypeIcon
+import com.example.ui.components.categoryIconByName
 import com.example.ui.theme.JetBrainsMono
+import com.example.util.DateMath
 import com.example.util.FinanceFormatters
 
 enum class MovementSheetMode(val labelEs: String) {
@@ -60,20 +66,34 @@ enum class MovementSheetMode(val labelEs: String) {
     MSI("MSI"),
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+private data class MsiOption(val months: Int, val label: String)
+
+private val MsiPresets = listOf(
+    MsiOption(3, "3 meses sin intereses"),
+    MsiOption(6, "6 meses sin intereses"),
+    MsiOption(9, "9 meses sin intereses"),
+    MsiOption(12, "12 meses sin intereses"),
+    MsiOption(18, "18 meses sin intereses"),
+    MsiOption(24, "24 meses sin intereses"),
+    MsiOption(0, "Otro plazo personalizado"),
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddTransactionSheet(
     accounts: List<AccountEntity>,
+    categories: List<CategoryEntity>,
     initialMode: MovementSheetMode = MovementSheetMode.EXPENSE,
     preselectedAccountId: Long? = null,
     preselectedDestinationId: Long? = null,
+    initialDateMillis: Long? = null,
     onDismiss: () -> Unit,
     onCreateAccountFirst: () -> Unit,
     onRecordIncomeOrExpense: (
         title: String,
         amount: Double,
         type: TransactionType,
-        category: FinanceCategory,
+        categoryName: String,
         accountId: Long,
         dateMillis: Long,
         note: String,
@@ -91,7 +111,7 @@ fun AddTransactionSheet(
         description: String,
         totalAmount: Double,
         totalMonths: Int,
-        category: FinanceCategory,
+        categoryName: String,
         startDateMillis: Long,
         note: String,
     ) -> Unit,
@@ -103,7 +123,7 @@ fun AddTransactionSheet(
     var title by remember { mutableStateOf("") }
     var amountText by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
-    var selectedDateMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var selectedDateMillis by remember { mutableLongStateOf(initialDateMillis ?: System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
 
     var selectedAccountId by remember(accounts, preselectedAccountId, mode) {
@@ -130,17 +150,18 @@ fun AddTransactionSheet(
         mutableStateOf(defaultDest)
     }
 
-    var selectedCategory by remember(mode) {
-        mutableStateOf(
-            when (mode) {
-                MovementSheetMode.INCOME -> FinanceCategory.SALARY
-                MovementSheetMode.MSI -> FinanceCategory.SHOPPING
-                else -> FinanceCategory.FOOD
-            }
-        )
+    val filteredCategories = remember(categories, mode) {
+        val wantIncome = mode == MovementSheetMode.INCOME
+        val list = categories.filter { it.isIncome == wantIncome }
+        if (list.isNotEmpty()) list else categories
     }
 
-    var msiMonthsText by remember { mutableStateOf("6") }
+    var selectedCategory by remember(filteredCategories, mode) {
+        mutableStateOf(filteredCategories.firstOrNull())
+    }
+
+    var selectedMsiPreset by remember { mutableStateOf(MsiPresets[1]) } // 6 MSI default
+    var customMsiMonthsText by remember { mutableStateOf("6") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     if (showDatePicker) {
@@ -149,7 +170,10 @@ fun AddTransactionSheet(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    pickerState.selectedDateMillis?.let { selectedDateMillis = it }
+                    pickerState.selectedDateMillis?.let {
+                        // Add 12h offset to avoid UTC midnight rolling back a day in local TZ
+                        selectedDateMillis = it + 43_200_000L
+                    }
                     showDatePicker = false
                 }) { Text("Elegir") }
             },
@@ -254,20 +278,6 @@ fun AddTransactionSheet(
                 return@Column
             }
 
-            if (mode == MovementSheetMode.TRANSFER && accounts.size < 2) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = "Agrega al menos dos cuentas o tarjetas para transferir dinero entre ellas o pagar tu tarjeta de crédito.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(16.dp),
-                    )
-                }
-            }
-
             OutlinedTextField(
                 value = amountText,
                 onValueChange = { amountText = sanitizeDecimal(it); errorMessage = null },
@@ -277,6 +287,7 @@ fun AddTransactionSheet(
                     )
                 },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -289,99 +300,93 @@ fun AddTransactionSheet(
                 label = {
                     Text(
                         when (mode) {
-                            MovementSheetMode.EXPENSE -> "Concepto (ej. Supermercado, Café)"
-                            MovementSheetMode.INCOME -> "Concepto (ej. Quincena, Venta)"
+                            MovementSheetMode.EXPENSE -> "Concepto (ej. Almuerzo, Gasolina)"
+                            MovementSheetMode.INCOME -> "Concepto (ej. Salario, Reembolso)"
                             MovementSheetMode.TRANSFER -> "Concepto (ej. Pago TDC, Ahorro)"
                             MovementSheetMode.MSI -> "Producto / Compra (ej. Laptop, Vuelo)"
                         }
                     )
                 },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("tx_title_input"),
             )
 
-            // Account selection
+            // Source Account ComboBox
             val selectableAccounts = if (mode == MovementSheetMode.MSI) creditCards else accounts
-            Text(
-                text = when (mode) {
+            val selectedAccount = selectableAccounts.firstOrNull { it.id == selectedAccountId }
+            FinanceComboBox(
+                label = when (mode) {
                     MovementSheetMode.EXPENSE -> "Cuenta o tarjeta de cargo"
                     MovementSheetMode.INCOME -> "Cuenta donde entra el dinero"
-                    MovementSheetMode.TRANSFER -> "Desde cuenta origen"
+                    MovementSheetMode.TRANSFER -> "Cuenta origen"
                     MovementSheetMode.MSI -> "Tarjeta de crédito"
                 },
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                options = selectableAccounts,
+                selectedOption = selectedAccount,
+                optionLabel = { it.name },
+                optionSubtitle = { "${it.accountType.shortLabelEs} · ${FinanceFormatters.currency(it.balance)}" },
+                optionLeadingIcon = { accountTypeIcon(it.accountType) },
+                onOptionSelected = { acc ->
+                    selectedAccountId = acc.id
+                    if (destinationAccountId == acc.id) {
+                        destinationAccountId = accounts.firstOrNull { it.id != acc.id }?.id
+                    }
+                    errorMessage = null
+                },
+                testTag = "tx_source_account_combobox",
             )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                selectableAccounts.forEach { acc ->
-                    FilterChip(
-                        selected = selectedAccountId == acc.id,
-                        onClick = {
-                            selectedAccountId = acc.id
-                            if (destinationAccountId == acc.id) {
-                                destinationAccountId = accounts.firstOrNull { it.id != acc.id }?.id
-                            }
-                            errorMessage = null
-                        },
-                        label = { Text("${acc.name} (${acc.accountType.shortLabelEs})") },
+
+            // Destination Account ComboBox for Transfer
+            if (mode == MovementSheetMode.TRANSFER && accounts.size >= 2) {
+                val destOptions = accounts.filter { it.id != selectedAccountId }
+                val selectedDest = destOptions.firstOrNull { it.id == destinationAccountId }
+                FinanceComboBox(
+                    label = "Cuenta, tarjeta o préstamo destino",
+                    options = destOptions,
+                    selectedOption = selectedDest,
+                    optionLabel = { it.name },
+                    optionSubtitle = { "${it.accountType.shortLabelEs} · ${FinanceFormatters.currency(it.balance)}" },
+                    optionLeadingIcon = { accountTypeIcon(it.accountType) },
+                    onOptionSelected = {
+                        destinationAccountId = it.id
+                        errorMessage = null
+                    },
+                    testTag = "tx_dest_account_combobox",
+                )
+            }
+
+            // MSI Term ComboBox
+            if (mode == MovementSheetMode.MSI) {
+                FinanceComboBox(
+                    label = "Plazo en meses sin intereses",
+                    options = MsiPresets,
+                    selectedOption = selectedMsiPreset,
+                    optionLabel = { it.label },
+                    onOptionSelected = { preset ->
+                        selectedMsiPreset = preset
+                        if (preset.months > 0) {
+                            customMsiMonthsText = preset.months.toString()
+                        }
+                    },
+                    testTag = "tx_msi_months_combobox",
+                )
+                if (selectedMsiPreset.months == 0) {
+                    OutlinedTextField(
+                        value = customMsiMonthsText,
+                        onValueChange = { if (it.length <= 2 && it.all(Char::isDigit)) customMsiMonthsText = it },
+                        label = { Text("Número de meses") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-            }
-
-            if (mode == MovementSheetMode.TRANSFER && accounts.size >= 2) {
-                Text(
-                    text = "Hacia cuenta, tarjeta o préstamo destino",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    accounts.filter { it.id != selectedAccountId }.forEach { acc ->
-                        FilterChip(
-                            selected = destinationAccountId == acc.id,
-                            onClick = { destinationAccountId = acc.id; errorMessage = null },
-                            label = { Text("${acc.name} (${acc.accountType.shortLabelEs})") },
-                        )
-                    }
-                }
-            }
-
-            if (mode == MovementSheetMode.MSI) {
-                Text(
-                    text = "Plazo en meses sin intereses",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    listOf(3, 6, 9, 12, 18, 24).forEach { m ->
-                        FilterChip(
-                            selected = msiMonthsText == m.toString(),
-                            onClick = { msiMonthsText = m.toString() },
-                            label = { Text("$m MSI") },
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    value = msiMonthsText,
-                    onValueChange = { if (it.length <= 2 && it.all(Char::isDigit)) msiMonthsText = it },
-                    label = { Text("Meses personalizados") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 val totalAmt = amountText.toDoubleOrNull() ?: 0.0
-                val months = msiMonthsText.toIntOrNull() ?: 0
+                val months = if (selectedMsiPreset.months > 0) selectedMsiPreset.months else (customMsiMonthsText.toIntOrNull() ?: 0)
                 if (totalAmt > 0.0 && months >= 2) {
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer,
@@ -408,59 +413,66 @@ fun AddTransactionSheet(
                 }
             }
 
-            if (mode != MovementSheetMode.TRANSFER) {
-                val categories = if (mode == MovementSheetMode.INCOME) {
-                    FinanceCategory.incomeCategories
-                } else {
-                    FinanceCategory.expenseCategories
-                }
+            // Category ComboBox
+            if (mode != MovementSheetMode.TRANSFER && filteredCategories.isNotEmpty()) {
+                FinanceComboBox(
+                    label = "Categoría",
+                    options = filteredCategories,
+                    selectedOption = selectedCategory,
+                    optionLabel = { it.name },
+                    optionSubtitle = { cat ->
+                        if (cat.monthlyBudget > 0.0) "Presupuesto: ${FinanceFormatters.currency(cat.monthlyBudget)}/mes"
+                        else null
+                    },
+                    optionLeadingIcon = { categoryIconByName(it.name, it.iconKey) },
+                    onOptionSelected = { selectedCategory = it },
+                    testTag = "tx_category_combobox",
+                )
+            }
+
+            // Date selector with clear active state highlight
+            val todayStart = remember { DateMath.startOfDay(System.currentTimeMillis()) }
+            val yesterdayStart = remember(todayStart) { todayStart - 86_400_000L }
+            val selectedDayStart = DateMath.startOfDay(selectedDateMillis)
+            val isToday = selectedDayStart == todayStart
+            val isYesterday = selectedDayStart == yesterdayStart
+            val isCustomDate = !isToday && !isYesterday
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    text = "Categoría",
+                    text = "Fecha: ${FinanceFormatters.fullDate(selectedDateMillis)}",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                FlowRow(
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    categories.forEach { cat ->
-                        FilterChip(
-                            selected = selectedCategory == cat,
-                            onClick = { selectedCategory = cat },
-                            label = { Text(cat.labelEs) },
-                            leadingIcon = {
-                                Icon(imageVector = categoryIcon(cat), contentDescription = null)
-                            },
-                        )
-                    }
-                }
-            }
-
-            // Date selector
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(
-                    onClick = { selectedDateMillis = System.currentTimeMillis() },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Hoy")
-                }
-                OutlinedButton(
-                    onClick = { selectedDateMillis = System.currentTimeMillis() - 86_400_000L },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Ayer")
-                }
-                OutlinedButton(
-                    onClick = { showDatePicker = true },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1.4f),
-                ) {
-                    Text(FinanceFormatters.shortDate(selectedDateMillis))
+                    DateOptionButton(
+                        label = "Hoy",
+                        selected = isToday,
+                        onClick = { selectedDateMillis = System.currentTimeMillis() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("tx_date_today"),
+                    )
+                    DateOptionButton(
+                        label = "Ayer",
+                        selected = isYesterday,
+                        onClick = { selectedDateMillis = System.currentTimeMillis() - 86_400_000L },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("tx_date_yesterday"),
+                    )
+                    DateOptionButton(
+                        label = if (isCustomDate) FinanceFormatters.shortDate(selectedDateMillis) else "Otra fecha",
+                        selected = isCustomDate,
+                        showCalendarIcon = !isCustomDate,
+                        onClick = { showDatePicker = true },
+                        modifier = Modifier
+                            .weight(1.35f)
+                            .testTag("tx_date_custom"),
+                    )
                 }
             }
 
@@ -469,6 +481,7 @@ fun AddTransactionSheet(
                 onValueChange = { note = it },
                 label = { Text("Nota (opcional)") },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -507,12 +520,13 @@ fun AddTransactionSheet(
 
                         when (mode) {
                             MovementSheetMode.EXPENSE, MovementSheetMode.INCOME -> {
-                                val resolvedTitle = title.trim().ifEmpty { selectedCategory.labelEs }
+                                val catName = selectedCategory?.name ?: "Otros"
+                                val resolvedTitle = title.trim().ifEmpty { catName }
                                 onRecordIncomeOrExpense(
                                     resolvedTitle,
                                     amount,
                                     if (mode == MovementSheetMode.INCOME) TransactionType.INCOME else TransactionType.EXPENSE,
-                                    selectedCategory,
+                                    catName,
                                     sourceId,
                                     selectedDateMillis,
                                     note,
@@ -529,18 +543,23 @@ fun AddTransactionSheet(
                             }
 
                             MovementSheetMode.MSI -> {
-                                val months = msiMonthsText.toIntOrNull() ?: 0
+                                val months = if (selectedMsiPreset.months > 0) {
+                                    selectedMsiPreset.months
+                                } else {
+                                    customMsiMonthsText.toIntOrNull() ?: 0
+                                }
                                 if (months < 2) {
                                     errorMessage = "Ingresa al menos 2 meses sin intereses."
                                     return@Button
                                 }
-                                val desc = title.trim().ifEmpty { selectedCategory.labelEs }
+                                val catName = selectedCategory?.name ?: "Compras"
+                                val desc = title.trim().ifEmpty { catName }
                                 onRecordInstallment(
                                     sourceId,
                                     desc,
                                     amount,
                                     months,
-                                    selectedCategory,
+                                    catName,
                                     selectedDateMillis,
                                     note,
                                 )
@@ -557,6 +576,49 @@ fun AddTransactionSheet(
             }
 
             Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun DateOptionButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    showCalendarIcon: Boolean = false,
+) {
+    if (selected) {
+        Button(
+            onClick = onClick,
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+            modifier = modifier,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(label, maxLines = 1)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+            modifier = modifier,
+        ) {
+            if (showCalendarIcon) {
+                Icon(
+                    imageVector = Icons.Rounded.CalendarToday,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(label, maxLines = 1)
         }
     }
 }

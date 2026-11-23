@@ -29,23 +29,35 @@ import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Payments
+import androidx.compose.material.icons.rounded.Pets
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.Restaurant
 import androidx.compose.material.icons.rounded.Savings
 import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.ShoppingBag
+import androidx.compose.material.icons.rounded.SportsGymnastics
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,6 +71,33 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.AccountType
 import com.example.data.model.FinanceCategory
 import com.example.ui.theme.ChartPalette
+import kotlin.math.abs
+
+data class CategoryIconOption(
+    val key: String,
+    val labelEs: String,
+    val icon: ImageVector,
+)
+
+val AvailableCategoryIcons = listOf(
+    CategoryIconOption("FOOD", "Comida / Restaurantes", Icons.Rounded.Restaurant),
+    CategoryIconOption("SHOPPING", "Compras / Gustos", Icons.Rounded.ShoppingBag),
+    CategoryIconOption("TRANSPORT", "Transporte / Gasolina", Icons.Rounded.DirectionsCar),
+    CategoryIconOption("HOUSING", "Hogar / Familia", Icons.Rounded.Home),
+    CategoryIconOption("UTILITIES", "Servicios (Luz, Internet)", Icons.Rounded.Bolt),
+    CategoryIconOption("SUBSCRIPTIONS", "Suscripciones", Icons.Rounded.Subscriptions),
+    CategoryIconOption("ENTERTAINMENT", "Entretenimiento", Icons.Rounded.Movie),
+    CategoryIconOption("HEALTH", "Salud / Medicinas", Icons.Rounded.HealthAndSafety),
+    CategoryIconOption("EDUCATION", "Educación", Icons.Rounded.School),
+    CategoryIconOption("TRAVEL", "Viajes", Icons.Rounded.Flight),
+    CategoryIconOption("FITNESS", "Deporte / Gimnasio", Icons.Rounded.SportsGymnastics),
+    CategoryIconOption("PETS", "Mascotas", Icons.Rounded.Pets),
+    CategoryIconOption("SALARY", "Salario / Nómina", Icons.Rounded.Work),
+    CategoryIconOption("INVESTMENTS", "Inversiones", Icons.Rounded.TrendingUp),
+    CategoryIconOption("FREELANCE", "Reembolso / Ingreso extra", Icons.Rounded.Payments),
+    CategoryIconOption("LOAN_COLLECTION", "Préstamos", Icons.Rounded.Handshake),
+    CategoryIconOption("OTHER", "General / Otros", Icons.Rounded.Autorenew),
+)
 
 fun accountTypeIcon(type: AccountType): ImageVector = when (type) {
     AccountType.SAVINGS -> Icons.Rounded.Savings
@@ -67,6 +106,10 @@ fun accountTypeIcon(type: AccountType): ImageVector = when (type) {
     AccountType.BANK_LOAN -> Icons.Rounded.ReceiptLong
     AccountType.LENT_LOAN -> Icons.Rounded.Handshake
     AccountType.CASH -> Icons.Rounded.AccountBalanceWallet
+}
+
+fun iconForKey(iconKey: String): ImageVector {
+    return AvailableCategoryIcons.firstOrNull { it.key == iconKey }?.icon ?: Icons.Rounded.Autorenew
 }
 
 fun categoryIcon(category: FinanceCategory): ImageVector = when (category) {
@@ -82,6 +125,7 @@ fun categoryIcon(category: FinanceCategory): ImageVector = when (category) {
     FinanceCategory.TRAVEL -> Icons.Rounded.Flight
     FinanceCategory.CARD_PAYMENT -> Icons.Rounded.CreditCard
     FinanceCategory.LOAN_PAYMENT -> Icons.Rounded.ReceiptLong
+    FinanceCategory.LOAN_DISBURSEMENT -> Icons.Rounded.Payments
     FinanceCategory.TRANSFER -> Icons.AutoMirrored.Rounded.CompareArrows
     FinanceCategory.SALARY -> Icons.Rounded.Work
     FinanceCategory.FREELANCE -> Icons.Rounded.Payments
@@ -90,9 +134,142 @@ fun categoryIcon(category: FinanceCategory): ImageVector = when (category) {
     FinanceCategory.OTHER -> Icons.Rounded.Autorenew
 }
 
-fun categoryColor(category: FinanceCategory): Color {
-    val index = category.ordinal % ChartPalette.size
-    return ChartPalette[index]
+fun categoryIconByName(name: String, iconKeyHint: String? = null): ImageVector {
+    if (!iconKeyHint.isNullOrBlank()) {
+        AvailableCategoryIcons.firstOrNull { it.key == iconKeyHint }?.let { return it.icon }
+    }
+    return when (name.trim().lowercase()) {
+        "restaurantes", "alimentación", "mandado" -> Icons.Rounded.Restaurant
+        "transporte" -> Icons.Rounded.DirectionsCar
+        "familia", "vivienda y renta" -> Icons.Rounded.Home
+        "servicios" -> Icons.Rounded.Bolt
+        "entretenimiento", "salidas" -> Icons.Rounded.Movie
+        "suscripciones" -> Icons.Rounded.Subscriptions
+        "gustos", "compras", "ropa" -> Icons.Rounded.ShoppingBag
+        "salud" -> Icons.Rounded.HealthAndSafety
+        "educación" -> Icons.Rounded.School
+        "viajes" -> Icons.Rounded.Flight
+        "mascotas" -> Icons.Rounded.Pets
+        "pago de tarjeta" -> Icons.Rounded.CreditCard
+        "pago de préstamo" -> Icons.Rounded.ReceiptLong
+        "desembolso de préstamo" -> Icons.Rounded.Payments
+        "transferencia" -> Icons.AutoMirrored.Rounded.CompareArrows
+        "salario", "nómina / sueldo" -> Icons.Rounded.Work
+        "inversiones" -> Icons.Rounded.TrendingUp
+        "reembolso / cashback", "ingresos extra", "freelance", "bonos y comisiones", "beneficios del gobierno" -> Icons.Rounded.Payments
+        "cobro de préstamo", "préstamo" -> Icons.Rounded.Handshake
+        else -> Icons.Rounded.Autorenew
+    }
+}
+
+fun categoryColorByName(name: String, colorIndexHint: Int? = null): Color {
+    val idx = colorIndexHint?.let { abs(it) % ChartPalette.size }
+        ?: (abs(name.trim().lowercase().hashCode()) % ChartPalette.size)
+    return ChartPalette[idx]
+}
+
+fun isLoanRepaymentCollection(
+    tx: com.example.data.model.TransactionEntity,
+    accountMap: Map<Long, com.example.data.model.AccountEntity>,
+): Boolean {
+    if (tx.transactionType != com.example.data.model.TransactionType.TRANSFER) return false
+    val srcType = accountMap[tx.accountId]?.accountType
+    return srcType == AccountType.LENT_LOAN ||
+        tx.categoryLabel.equals("Cobro de Préstamo", ignoreCase = true)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun <T> FinanceComboBox(
+    label: String,
+    options: List<T>,
+    selectedOption: T?,
+    optionLabel: (T) -> String,
+    onOptionSelected: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    optionSubtitle: ((T) -> String?)? = null,
+    optionLeadingIcon: ((T) -> ImageVector)? = null,
+    placeholder: String = "Seleccionar...",
+    enabled: Boolean = true,
+    testTag: String = "combo_box",
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val displayText = selectedOption?.let(optionLabel).orEmpty()
+
+    ExposedDropdownMenuBox(
+        expanded = expanded && enabled,
+        onExpandedChange = { if (enabled) expanded = !expanded },
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        OutlinedTextField(
+            value = displayText,
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            singleLine = true,
+            label = { Text(label) },
+            placeholder = { Text(placeholder) },
+            leadingIcon = if (selectedOption != null && optionLeadingIcon != null) {
+                {
+                    Icon(
+                        imageVector = optionLeadingIcon(selectedOption),
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            } else null,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && enabled) },
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled)
+                .testTag(testTag),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && enabled,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { option ->
+                val subtitle = optionSubtitle?.invoke(option)
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = optionLabel(option),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (option == selectedOption) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (!subtitle.isNullOrBlank()) {
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    },
+                    leadingIcon = optionLeadingIcon?.let { iconProvider ->
+                        {
+                            Icon(
+                                imageVector = iconProvider(option),
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    },
+                    onClick = {
+                        onOptionSelected(option)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable

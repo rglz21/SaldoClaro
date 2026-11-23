@@ -4,6 +4,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +19,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -293,6 +297,7 @@ fun CategoryDonutChart(
     totalExpense: Double,
     hideBalances: Boolean,
     modifier: Modifier = Modifier,
+    onSliceClick: ((CategorySlice) -> Unit)? = null,
 ) {
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
     var played by remember(slices) { mutableStateOf(false) }
@@ -332,7 +337,7 @@ fun CategoryDonutChart(
                         val rawSweep = (slice.ratio * 360.0).toFloat() * sweepProgress
                         val sweep = (rawSweep - if (slices.size > 1) 2.5f else 0f).coerceAtLeast(1.5f)
                         drawArc(
-                            color = categoryColor(slice.category),
+                            color = categoryColorByName(slice.categoryName, slice.colorIndex),
                             startAngle = startAngle,
                             sweepAngle = sweep,
                             useCenter = false,
@@ -364,11 +369,18 @@ fun CategoryDonutChart(
         Spacer(Modifier.height(14.dp))
 
         // Category breakdown rows
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            slices.take(7).forEach { slice ->
-                val color = categoryColor(slice.category)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            slices.take(10).forEach { slice ->
+                val color = categoryColorByName(slice.categoryName, slice.colorIndex)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .then(
+                            if (onSliceClick != null) Modifier.clickable { onSliceClick(slice) }
+                            else Modifier
+                        )
+                        .padding(vertical = 4.dp, horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
@@ -384,13 +396,15 @@ fun CategoryDonutChart(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                text = slice.category.labelEs,
+                                text = "${slice.categoryName} (${slice.count})",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
                             )
+                            Spacer(Modifier.width(8.dp))
                             Text(
                                 text = "${FinanceFormatters.currency(slice.amount, hideBalances)} (${FinanceFormatters.percent(slice.ratio)})",
                                 style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMono),
@@ -414,6 +428,15 @@ fun CategoryDonutChart(
                                     .background(color)
                             )
                         }
+                    }
+                    if (onSliceClick != null) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            contentDescription = "Ver detalle de ${slice.categoryName}",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
                 }
             }

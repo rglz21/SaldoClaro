@@ -33,7 +33,10 @@ enum class TransactionType(val labelEs: String) {
 
 enum class RecurringKind(val labelEs: String) {
     SUBSCRIPTION("Suscripción"),
-    RECURRING_BILL("Pago frecuente");
+    RECURRING_BILL("Pago frecuente"),
+    RECURRING_INCOME("Ingreso frecuente");
+
+    val isIncome: Boolean get() = this == RECURRING_INCOME
 
     companion object {
         fun fromName(name: String): RecurringKind =
@@ -70,6 +73,7 @@ enum class FinanceCategory(
     TRAVEL("Viajes"),
     CARD_PAYMENT("Pago de Tarjeta"),
     LOAN_PAYMENT("Pago de Préstamo"),
+    LOAN_DISBURSEMENT("Desembolso de Préstamo"),
     TRANSFER("Transferencia"),
     SALARY("Nómina / Sueldo", isIncomeDefault = true),
     FREELANCE("Ingresos Extra", isIncomeDefault = true),

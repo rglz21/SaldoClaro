@@ -8,10 +8,8 @@ import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
 import com.example.data.model.AnalyticsGranularity
 import com.example.data.model.AnalyticsPeriod
-import com.example.data.model.BudgetEntity
-import com.example.data.model.FinanceCategory
+import com.example.data.model.CategoryEntity
 import com.example.data.model.InstallmentPlanEntity
-import com.example.data.model.RecurrenceFrequency
 import com.example.data.model.RecurringKind
 import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
@@ -20,6 +18,7 @@ import com.example.data.repository.FinanceRepository
 import com.example.util.DateMath
 import com.example.util.FinanceFormatters
 import com.example.util.NextDateInfo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +26,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import java.util.Locale
 import kotlin.math.max
 
 data class CreditCardSummary(
@@ -49,14 +49,15 @@ data class ChartBarPoint(
 )
 
 data class CategorySlice(
-    val category: FinanceCategory,
+    val categoryName: String,
+    val colorIndex: Int?,
     val amount: Double,
     val ratio: Double,
     val count: Int,
 )
 
 data class BudgetProgress(
-    val budget: BudgetEntity,
+    val category: CategoryEntity,
     val spentThisMonth: Double,
     val ratio: Double,
 )
@@ -66,6 +67,7 @@ data class AnalyticsSummary(
     val granularity: AnalyticsGranularity,
     val availableGranularities: List<AnalyticsGranularity>,
     val periodSubtitle: String,
+    val periodStartMillis: Long = 0L,
     val totalExpense: Double,
     val totalIncome: Double,
     val netFlow: Double,
@@ -86,7 +88,7 @@ data class FinanceUiState(
     val transactions: List<TransactionEntity> = emptyList(),
     val installmentPlans: List<InstallmentPlanEntity> = emptyList(),
     val scheduledPayments: List<ScheduledPaymentEntity> = emptyList(),
-    val budgets: List<BudgetEntity> = emptyList(),
+    val categories: List<CategoryEntity> = emptyList(),
     val hideBalances: Boolean = false,
     val liquidTotal: Double = 0.0,
     val creditDebtTotal: Double = 0.0,
@@ -98,6 +100,7 @@ data class FinanceUiState(
     val monthExpense: Double = 0.0,
     val monthlySubscriptionsTotal: Double = 0.0,
     val monthlyRecurringBillsTotal: Double = 0.0,
+    val monthlyRecurringIncomeTotal: Double = 0.0,
     val monthlyMsiTotal: Double = 0.0,
     val monthlyLoanTotal: Double = 0.0,
     val creditCardSummaries: List<CreditCardSummary> = emptyList(),
@@ -133,14 +136,22 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val repository = FinanceRepository(FinanceDatabase.getInstance(application))
     private val uiPrefs = MutableStateFlow(UiPrefsState())
 
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                repository.ensureSeeded(getApplication())
+            }
+        }
+    }
+
     private val coreDataFlow = combine(
         repository.accounts,
         repository.transactions,
         repository.installmentPlans,
         repository.scheduledPayments,
-        repository.budgets,
-    ) { accounts, transactions, plans, scheduled, budgets ->
-        CoreData(accounts, transactions, plans, scheduled, budgets)
+        repository.categories,
+    ) { accounts, transactions, plans, scheduled, categories ->
+        CoreData(accounts, transactions, plans, scheduled, categories)
     }
 
     val uiState: StateFlow<FinanceUiState> = combine(coreDataFlow, uiPrefs) { data, prefs ->
@@ -156,7 +167,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val transactions: List<TransactionEntity>,
         val plans: List<InstallmentPlanEntity>,
         val scheduled: List<ScheduledPaymentEntity>,
-        val budgets: List<BudgetEntity>,
+        val categories: List<CategoryEntity>,
     )
 
     fun togglePrivacy() {
@@ -186,16 +197,31 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     // --- Account Actions ---
 
-    fun saveAccount(account: AccountEntity) {
+    fun saveAccount(account: AccountEntity, applyDisbursementNow: Boolean = false) {
         viewModelScope.launch {
             runCatching {
-                if (account.id == 0L) repository.saveAccount(account)
-                else repository.updateAccount(account)
+                val isNewLoan = account.id == 0L &&
+                    (account.accountType == AccountType.BANK_LOAN || account.accountType == AccountType.LENT_LOAN)
+                when {
+                    isNewLoan -> repository.saveLoanWithDisbursement(
+                        loan = account,
+                        applyDisbursementNow = applyDisbursementNow,
+                    )
+                    account.id == 0L -> repository.saveAccount(account)
+                    else -> repository.updateAccount(account)
+                }
             }.onSuccess {
-                postMessage(
-                    if (account.id == 0L) "Cuenta \"${account.name}\" agregada"
-                    else "Cuenta \"${account.name}\" actualizada"
-                )
+                val msg = when {
+                    account.id != 0L -> "Cuenta \"${account.name}\" actualizada"
+                    applyDisbursementNow && account.linkedAccountId != null &&
+                        account.accountType == AccountType.BANK_LOAN ->
+                        "Préstamo guardado y desembolso depositado en tu cuenta"
+                    applyDisbursementNow && account.linkedAccountId != null &&
+                        account.accountType == AccountType.LENT_LOAN ->
+                        "Préstamo registrado y desembolso descontado de tu cuenta"
+                    else -> "Cuenta \"${account.name}\" agregada"
+                }
+                postMessage(msg)
             }.onFailure {
                 postMessage(it.message ?: "No se pudo guardar la cuenta")
             }
@@ -220,7 +246,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         title: String,
         amount: Double,
         type: TransactionType,
-        category: FinanceCategory,
+        categoryName: String,
         accountId: Long,
         dateMillis: Long,
         note: String,
@@ -231,7 +257,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     title = title,
                     amount = amount,
                     type = type,
-                    category = category,
+                    categoryName = categoryName,
                     accountId = accountId,
                     dateMillis = dateMillis,
                     note = note,
@@ -254,7 +280,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         toAccountId: Long,
         dateMillis: Long,
         note: String,
-        categoryOverride: FinanceCategory? = null,
+        categoryOverride: String? = null,
     ) {
         viewModelScope.launch {
             runCatching {
@@ -280,7 +306,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         description: String,
         totalAmount: Double,
         totalMonths: Int,
-        category: FinanceCategory,
+        categoryName: String,
         startDateMillis: Long,
         note: String,
     ) {
@@ -291,7 +317,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     description = description,
                     totalAmount = totalAmount,
                     totalMonths = totalMonths,
-                    category = category,
+                    categoryName = categoryName,
                     startDateMillis = startDateMillis,
                     note = note,
                 )
@@ -315,18 +341,6 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun deleteInstallmentPlan(planId: Long) {
-        viewModelScope.launch {
-            runCatching {
-                repository.deleteInstallmentPlan(planId)
-            }.onSuccess {
-                postMessage("Plan MSI eliminado")
-            }.onFailure {
-                postMessage("Error al eliminar el plan MSI")
-            }
-        }
-    }
-
     fun deleteTransaction(transactionId: Long) {
         viewModelScope.launch {
             runCatching {
@@ -346,10 +360,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 repository.saveScheduledPayment(payment)
             }.onSuccess {
-                val label = if (payment.recurringKind == RecurringKind.SUBSCRIPTION) "Suscripción" else "Pago frecuente"
+                val label = payment.recurringKind.labelEs
                 postMessage("$label \"${payment.name}\" guardado")
             }.onFailure {
-                postMessage(it.message ?: "Error al guardar el pago programado")
+                postMessage(it.message ?: "Error al guardar el registro programado")
             }
         }
     }
@@ -359,7 +373,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 repository.toggleScheduledPayment(payment)
             }.onSuccess {
-                postMessage(if (payment.isActive) "Pago pausado" else "Pago reactivado")
+                val noun = if (payment.recurringKind.isIncome) "Ingreso" else "Pago"
+                postMessage(if (payment.isActive) "$noun pausado" else "$noun reactivado")
             }
         }
     }
@@ -379,33 +394,52 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 repository.executeScheduledPaymentNow(payment)
             }.onSuccess {
-                postMessage("Pago de \"${payment.name}\" registrado y próxima fecha actualizada")
+                val verb = if (payment.recurringKind.isIncome) "Ingreso" else "Pago"
+                postMessage("$verb de \"${payment.name}\" registrado y próxima fecha actualizada")
             }.onFailure {
-                postMessage(it.message ?: "No se pudo ejecutar el pago")
+                postMessage(it.message ?: "No se pudo registrar el movimiento")
             }
         }
     }
 
-    // --- Budgets ---
+    // --- Categories & Budgets ---
 
-    fun saveBudget(category: FinanceCategory, monthlyLimit: Double) {
+    fun saveCategory(category: CategoryEntity) {
         viewModelScope.launch {
             runCatching {
-                repository.upsertBudget(category, monthlyLimit)
+                repository.saveCategory(category)
             }.onSuccess {
-                postMessage("Presupuesto de ${category.labelEs} guardado")
+                postMessage(
+                    if (category.id == 0L) "Categoría \"${category.name}\" creada"
+                    else "Categoría \"${category.name}\" actualizada"
+                )
             }.onFailure {
-                postMessage("Monto de presupuesto inválido")
+                postMessage(it.message ?: "No se pudo guardar la categoría")
             }
         }
     }
 
-    fun deleteBudget(category: FinanceCategory) {
+    fun updateCategoryBudget(category: CategoryEntity, monthlyLimit: Double) {
         viewModelScope.launch {
             runCatching {
-                repository.deleteBudget(category)
+                repository.updateCategoryBudget(category.id, monthlyLimit)
             }.onSuccess {
-                postMessage("Presupuesto eliminado")
+                postMessage(
+                    if (monthlyLimit > 0.0) "Presupuesto asignado a ${category.name}"
+                    else "Presupuesto quitado de ${category.name}"
+                )
+            }.onFailure {
+                postMessage(it.message ?: "Monto de presupuesto inválido")
+            }
+        }
+    }
+
+    fun deleteCategory(category: CategoryEntity) {
+        viewModelScope.launch {
+            runCatching {
+                repository.deleteCategory(category.id)
+            }.onSuccess {
+                postMessage("Categoría \"${category.name}\" eliminada")
             }
         }
     }
@@ -422,7 +456,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val transactions = data.transactions
         val plans = data.plans
         val scheduled = data.scheduled
-        val budgets = data.budgets
+        val categories = data.categories
 
         val liquidTotal = accounts
             .filter { it.accountType.isLiquidAsset }
@@ -440,9 +474,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val netWorth = liquidTotal + lentLoansTotal - creditDebtTotal - bankLoansTotal
 
         val monthStart = DateMath.startOfCurrentMonth()
+        val accountTypeMap = accounts.associate { it.id to it.accountType }
         val monthTxs = transactions.filter { it.dateMillis >= monthStart }
         val monthIncome = monthTxs
-            .filter { it.transactionType == TransactionType.INCOME }
+            .filter { tx ->
+                tx.transactionType == TransactionType.INCOME ||
+                    (tx.transactionType == TransactionType.TRANSFER &&
+                        (accountTypeMap[tx.accountId] == AccountType.LENT_LOAN ||
+                            tx.categoryLabel.equals("Cobro de Préstamo", ignoreCase = true)))
+            }
             .sumOf { it.amount }
         val monthExpense = monthTxs
             .filter { it.transactionType == TransactionType.EXPENSE }
@@ -454,6 +494,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             .sumOf { it.amount * it.recurrenceFrequency.monthlyFactor }
         val monthlyBills = activeScheduled
             .filter { it.recurringKind == RecurringKind.RECURRING_BILL }
+            .sumOf { it.amount * it.recurrenceFrequency.monthlyFactor }
+        val monthlyRecurringIncome = activeScheduled
+            .filter { it.recurringKind == RecurringKind.RECURRING_INCOME }
             .sumOf { it.amount * it.recurrenceFrequency.monthlyFactor }
 
         val activePlans = plans.filter { !it.isCompleted }
@@ -492,7 +535,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
         val analytics = computeAnalytics(
             transactions = transactions,
-            budgets = budgets,
+            categories = categories,
             monthExpense = monthExpense,
             period = prefs.period,
             requestedGranularity = prefs.granularity,
@@ -506,7 +549,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             transactions = transactions,
             installmentPlans = plans,
             scheduledPayments = scheduled,
-            budgets = budgets,
+            categories = categories,
             hideBalances = prefs.hideBalances,
             liquidTotal = liquidTotal,
             creditDebtTotal = creditDebtTotal,
@@ -518,6 +561,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             monthExpense = monthExpense,
             monthlySubscriptionsTotal = monthlySubs,
             monthlyRecurringBillsTotal = monthlyBills,
+            monthlyRecurringIncomeTotal = monthlyRecurringIncome,
             monthlyMsiTotal = monthlyMsiTotal,
             monthlyLoanTotal = monthlyLoanTotal,
             creditCardSummaries = creditCardSummaries,
@@ -528,7 +572,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     private fun computeAnalytics(
         transactions: List<TransactionEntity>,
-        budgets: List<BudgetEntity>,
+        categories: List<CategoryEntity>,
         monthExpense: Double,
         period: AnalyticsPeriod,
         requestedGranularity: AnalyticsGranularity,
@@ -576,12 +620,14 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
         val barPoints = buildBarPoints(period, granularity, periodTxs)
 
+        val categoryMetaByLower = categories.associateBy { it.name.lowercase(Locale.ROOT) }
         val categoryBreakdown = periodExpenseTxs
-            .groupBy { it.financeCategory }
-            .map { (cat, list) ->
+            .groupBy { it.categoryLabel }
+            .map { (catName, list) ->
                 val sum = list.sumOf { it.amount }
                 CategorySlice(
-                    category = cat,
+                    categoryName = catName,
+                    colorIndex = categoryMetaByLower[catName.lowercase(Locale.ROOT)]?.colorIndex,
                     amount = sum,
                     ratio = if (totalExpense > 0.0) sum / totalExpense else 0.0,
                     count = list.size,
@@ -590,22 +636,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             .sortedByDescending { it.amount }
 
         val monthStart = DateMath.startOfCurrentMonth()
-        val monthExpenseByCat = transactions
+        val monthExpenseByLowerCat = transactions
             .filter { it.dateMillis >= monthStart && it.transactionType == TransactionType.EXPENSE }
-            .groupBy { it.financeCategory }
+            .groupBy { it.categoryLabel.lowercase(Locale.ROOT) }
             .mapValues { entry -> entry.value.sumOf { it.amount } }
 
-        val budgetProgress = budgets.map { budget ->
-            val spent = monthExpenseByCat[budget.financeCategory] ?: 0.0
-            val ratio = if (budget.monthlyLimit > 0.0) spent / budget.monthlyLimit else 0.0
-            BudgetProgress(budget = budget, spentThisMonth = spent, ratio = ratio)
-        }.sortedByDescending { it.ratio }
+        val budgetProgress = categories
+            .filter { it.monthlyBudget > 0.0 }
+            .map { cat ->
+                val spent = monthExpenseByLowerCat[cat.name.lowercase(Locale.ROOT)] ?: 0.0
+                val ratio = spent / cat.monthlyBudget
+                BudgetProgress(category = cat, spentThisMonth = spent, ratio = ratio)
+            }
+            .sortedByDescending { it.ratio }
 
         return AnalyticsSummary(
             period = period,
             granularity = granularity,
             availableGranularities = availableGranularities,
             periodSubtitle = periodSubtitle,
+            periodStartMillis = periodStart,
             totalExpense = totalExpense,
             totalIncome = totalIncome,
             netFlow = netFlow,
@@ -709,7 +759,6 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             }
 
             period == AnalyticsPeriod.YEAR && granularity == AnalyticsGranularity.WEEK -> {
-                // Show last 12 weeks of current year for clear readability
                 val nowCal = Calendar.getInstance()
                 val currentWeek = nowCal.get(Calendar.WEEK_OF_YEAR)
                 val startWeek = max(1, currentWeek - 11)
@@ -740,7 +789,6 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             }
 
             else -> {
-                // YEAR by MONTH
                 val shortMonths = listOf("Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic")
                 val fullMonths = listOf(
                     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",

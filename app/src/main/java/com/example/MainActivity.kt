@@ -23,14 +23,18 @@ import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material.icons.rounded.AccountBalance
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Analytics
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.EventRepeat
 import androidx.compose.material.icons.rounded.ReceiptLong
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -40,6 +44,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,18 +69,29 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
+import com.example.data.model.CategoryEntity
 import com.example.data.model.RecurringKind
 import com.example.data.model.ScheduledPaymentEntity
+import com.example.data.model.TransactionEntity
 import com.example.ui.screens.AccountsScreen
 import com.example.ui.screens.AnalyticsScreen
+import com.example.ui.screens.AnalyticsTabMode
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.ScheduledScreen
 import com.example.ui.screens.TransactionsScreen
+import com.example.ui.screens.TransactionsViewMode
+import com.example.ui.sheets.AccountDetailSheet
 import com.example.ui.sheets.AddAccountSheet
 import com.example.ui.sheets.AddBudgetSheet
+import com.example.ui.sheets.AddCategorySheet
 import com.example.ui.sheets.AddScheduledSheet
 import com.example.ui.sheets.AddTransactionSheet
+import com.example.ui.sheets.AnalyticsCategoryDetailSheet
+import com.example.ui.sheets.AnalyticsKpiDetailSheet
+import com.example.ui.sheets.AnalyticsKpiKind
 import com.example.ui.sheets.MovementSheetMode
+import com.example.ui.sheets.ScheduledDetailSheet
+import com.example.ui.sheets.TransactionDetailSheet
 import com.example.ui.theme.SaldoClaroTheme
 import com.example.ui.viewmodel.FinanceViewModel
 
@@ -104,6 +120,7 @@ private data class MovementSheetRequest(
     val mode: MovementSheetMode = MovementSheetMode.EXPENSE,
     val sourceAccountId: Long? = null,
     val destinationAccountId: Long? = null,
+    val initialDateMillis: Long? = null,
 )
 
 private data class AccountSheetRequest(
@@ -114,6 +131,14 @@ private data class AccountSheetRequest(
 private data class ScheduledSheetRequest(
     val editing: ScheduledPaymentEntity? = null,
     val initialKind: RecurringKind = RecurringKind.SUBSCRIPTION,
+)
+
+private data class CategorySheetRequest(
+    val editing: CategoryEntity? = null,
+)
+
+private data class BudgetSheetRequest(
+    val preselectedCategory: CategoryEntity? = null,
 )
 
 class MainActivity : ComponentActivity() {
@@ -140,10 +165,25 @@ fun SaldoClaroApp(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
+    // Create / Edit Modal Requests
     var movementSheet by remember { mutableStateOf<MovementSheetRequest?>(null) }
     var accountSheet by remember { mutableStateOf<AccountSheetRequest?>(null) }
     var scheduledSheet by remember { mutableStateOf<ScheduledSheetRequest?>(null) }
-    var showBudgetSheet by remember { mutableStateOf(false) }
+    var categorySheet by remember { mutableStateOf<CategorySheetRequest?>(null) }
+    var budgetSheet by remember { mutableStateOf<BudgetSheetRequest?>(null) }
+
+    // Sub-view modes
+    var transactionsViewMode by remember { mutableStateOf(TransactionsViewMode.CALENDAR) }
+    var analyticsTabMode by remember { mutableStateOf(AnalyticsTabMode.ANALYTICS) }
+
+    // Drill-down Detail Sheets
+    var detailAccountId by remember { mutableStateOf<Long?>(null) }
+    var detailTransaction by remember { mutableStateOf<TransactionEntity?>(null) }
+    var detailScheduledId by remember { mutableStateOf<Long?>(null) }
+    var detailKpiKind by remember { mutableStateOf<AnalyticsKpiKind?>(null) }
+    var detailCategoryName by remember { mutableStateOf<String?>(null) }
+    var pendingDeleteTxFromDetail by remember { mutableStateOf<TransactionEntity?>(null) }
+    var pendingDeleteScheduledFromDetail by remember { mutableStateOf<ScheduledPaymentEntity?>(null) }
 
     LaunchedEffect(state.snackbarMessage) {
         val message = state.snackbarMessage
@@ -161,6 +201,44 @@ fun SaldoClaroApp(
             launchSingleTop = true
             restoreState = true
         }
+    }
+
+    if (pendingDeleteTxFromDetail != null) {
+        val tx = pendingDeleteTxFromDetail!!
+        AlertDialog(
+            onDismissRequest = { pendingDeleteTxFromDetail = null },
+            title = { Text("Eliminar movimiento") },
+            text = { Text("Se eliminará \"${tx.title}\" y se revertirá el saldo en las cuentas afectadas.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteTransaction(tx.id)
+                    pendingDeleteTxFromDetail = null
+                    detailTransaction = null
+                }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteTxFromDetail = null }) { Text("Cancelar") }
+            },
+        )
+    }
+
+    if (pendingDeleteScheduledFromDetail != null) {
+        val item = pendingDeleteScheduledFromDetail!!
+        AlertDialog(
+            onDismissRequest = { pendingDeleteScheduledFromDetail = null },
+            title = { Text("Eliminar ${item.name}") },
+            text = { Text("Se eliminará este registro programado. Los movimientos ya registrados se conservarán.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteScheduledPayment(item)
+                    pendingDeleteScheduledFromDetail = null
+                    detailScheduledId = null
+                }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteScheduledFromDetail = null }) { Text("Cancelar") }
+            },
+        )
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -185,12 +263,12 @@ fun SaldoClaroApp(
                     modifier = Modifier.testTag("fab_add_scheduled"),
                 )
                 ROUTE_ANALYTICS -> ExtendedFloatingActionButton(
-                    onClick = { showBudgetSheet = true },
+                    onClick = { categorySheet = CategorySheetRequest() },
                     icon = { Icon(Icons.Rounded.Add, contentDescription = null) },
-                    text = { Text("Presupuesto") },
+                    text = { Text("Categoría") },
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.testTag("fab_add_budget"),
+                    modifier = Modifier.testTag("fab_add_category"),
                 )
                 else -> FloatingActionButton(
                     onClick = { movementSheet = MovementSheetRequest(MovementSheetMode.EXPENSE) },
@@ -209,9 +287,10 @@ fun SaldoClaroApp(
         val currentTitle = when (currentRoute) {
             ROUTE_DASHBOARD -> stringResource(R.string.app_name)
             ROUTE_ACCOUNTS -> "Cuentas, Tarjetas y Préstamos"
-            ROUTE_TRANSACTIONS -> "Movimientos"
-            ROUTE_SCHEDULED -> "Suscripciones y Pagos"
-            ROUTE_ANALYTICS -> "Análisis y Presupuestos"
+            ROUTE_TRANSACTIONS -> "Movimientos y Calendario"
+            ROUTE_SCHEDULED -> "Pagos e Ingresos Frecuentes"
+            ROUTE_ANALYTICS -> if (analyticsTabMode == AnalyticsTabMode.CATEGORIES) "Categorías y Presupuestos"
+            else "Análisis y Categorías"
             else -> stringResource(R.string.app_name)
         }
 
@@ -252,6 +331,38 @@ fun SaldoClaroApp(
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                             )
+                        },
+                        actions = {
+                            if (currentRoute != ROUTE_ANALYTICS || analyticsTabMode != AnalyticsTabMode.CATEGORIES) {
+                                IconButton(
+                                    onClick = {
+                                        analyticsTabMode = AnalyticsTabMode.CATEGORIES
+                                        navigateToTab(ROUTE_ANALYTICS)
+                                    },
+                                    modifier = Modifier.testTag("topbar_categories_shortcut"),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Category,
+                                        contentDescription = "Categorías y presupuestos",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                            if (currentRoute != ROUTE_TRANSACTIONS) {
+                                IconButton(
+                                    onClick = {
+                                        transactionsViewMode = TransactionsViewMode.CALENDAR
+                                        navigateToTab(ROUTE_TRANSACTIONS)
+                                    },
+                                    modifier = Modifier.testTag("topbar_calendar_shortcut"),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.CalendarMonth,
+                                        contentDescription = "Abrir calendario de flujo diario",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
                         },
                         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                             containerColor = MaterialTheme.colorScheme.background,
@@ -314,14 +425,25 @@ fun SaldoClaroApp(
                                 },
                                 onOpenAddAccount = { accountSheet = AccountSheetRequest() },
                                 onNavigateToAccounts = { navigateToTab(ROUTE_ACCOUNTS) },
-                                onNavigateToTransactions = { navigateToTab(ROUTE_TRANSACTIONS) },
+                                onNavigateToTransactions = {
+                                    transactionsViewMode = TransactionsViewMode.LIST
+                                    navigateToTab(ROUTE_TRANSACTIONS)
+                                },
+                                onNavigateToCalendar = {
+                                    transactionsViewMode = TransactionsViewMode.CALENDAR
+                                    navigateToTab(ROUTE_TRANSACTIONS)
+                                },
                                 onNavigateToScheduled = { navigateToTab(ROUTE_SCHEDULED) },
                                 onPayScheduledNow = viewModel::executeScheduledPaymentNow,
+                                onAccountClick = { acc -> detailAccountId = acc.id },
+                                onScheduledClick = { item -> detailScheduledId = item.id },
+                                onTransactionClick = { tx -> detailTransaction = tx },
                             )
                         }
                         composable(ROUTE_ACCOUNTS) {
                             AccountsScreen(
                                 state = state,
+                                onAccountClick = { acc -> detailAccountId = acc.id },
                                 onAddAccount = { type -> accountSheet = AccountSheetRequest(initialType = type) },
                                 onEditAccount = { acc -> accountSheet = AccountSheetRequest(editing = acc) },
                                 onDeleteAccount = viewModel::deleteAccount,
@@ -334,7 +456,12 @@ fun SaldoClaroApp(
                         composable(ROUTE_TRANSACTIONS) {
                             TransactionsScreen(
                                 state = state,
-                                onOpenAddMovement = { mode -> movementSheet = MovementSheetRequest(mode) },
+                                viewMode = transactionsViewMode,
+                                onViewModeChange = { transactionsViewMode = it },
+                                onTransactionClick = { tx -> detailTransaction = tx },
+                                onOpenAddMovement = { mode, dateMillis ->
+                                    movementSheet = MovementSheetRequest(mode = mode, initialDateMillis = dateMillis)
+                                },
                                 onDeleteTransaction = viewModel::deleteTransaction,
                             )
                         }
@@ -342,6 +469,7 @@ fun SaldoClaroApp(
                             ScheduledScreen(
                                 state = state,
                                 onAddScheduled = { kind -> scheduledSheet = ScheduledSheetRequest(initialKind = kind) },
+                                onScheduledClick = { item -> detailScheduledId = item.id },
                                 onEditScheduled = { item -> scheduledSheet = ScheduledSheetRequest(editing = item) },
                                 onToggleScheduled = viewModel::toggleScheduledPayment,
                                 onDeleteScheduled = viewModel::deleteScheduledPayment,
@@ -351,10 +479,17 @@ fun SaldoClaroApp(
                         composable(ROUTE_ANALYTICS) {
                             AnalyticsScreen(
                                 state = state,
+                                tabMode = analyticsTabMode,
+                                onTabModeChange = { analyticsTabMode = it },
                                 onSelectPeriod = viewModel::selectAnalyticsPeriod,
                                 onSelectGranularity = viewModel::selectAnalyticsGranularity,
-                                onOpenAddBudget = { showBudgetSheet = true },
-                                onDeleteBudget = viewModel::deleteBudget,
+                                onKpiClick = { kind -> detailKpiKind = kind },
+                                onCategoryDetailClick = { name -> detailCategoryName = name },
+                                onOpenAddCategory = { categorySheet = CategorySheetRequest() },
+                                onEditCategory = { cat -> categorySheet = CategorySheetRequest(editing = cat) },
+                                onDeleteCategory = viewModel::deleteCategory,
+                                onOpenAddBudget = { cat -> budgetSheet = BudgetSheetRequest(preselectedCategory = cat) },
+                                onRemoveBudget = { cat -> viewModel.updateCategoryBudget(cat, 0.0) },
                                 onExportCsv = {
                                     val csv = viewModel.buildCsvExport()
                                     val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -372,14 +507,123 @@ fun SaldoClaroApp(
         }
     }
 
-    // Modal Bottom Sheets
+    // Detail Modal Sheets
+    detailAccountId?.let { accId ->
+        val account = state.accounts.firstOrNull { it.id == accId }
+        if (account != null) {
+            val ccSummary = state.creditCardSummaries.firstOrNull { it.card.id == account.id }
+            val liquidDefault = state.accounts.firstOrNull { it.accountType.isLiquidAsset }?.id
+            AccountDetailSheet(
+                account = account,
+                creditCardSummary = ccSummary,
+                allAccounts = state.accounts,
+                transactions = state.transactions,
+                categories = state.categories,
+                hideBalances = state.hideBalances,
+                onDismiss = { detailAccountId = null },
+                onEdit = {
+                    detailAccountId = null
+                    accountSheet = AccountSheetRequest(editing = account)
+                },
+                onTransferOrPay = {
+                    detailAccountId = null
+                    when (account.accountType) {
+                        AccountType.CREDIT, AccountType.BANK_LOAN -> {
+                            val payer = account.linkedAccountId?.takeIf { id -> state.accounts.any { it.id == id } } ?: liquidDefault
+                            movementSheet = MovementSheetRequest(MovementSheetMode.TRANSFER, payer, account.id)
+                        }
+                        AccountType.LENT_LOAN -> {
+                            val dst = account.linkedAccountId?.takeIf { id -> state.accounts.any { it.id == id } } ?: liquidDefault
+                            movementSheet = MovementSheetRequest(MovementSheetMode.TRANSFER, account.id, dst)
+                        }
+                        else -> {
+                            movementSheet = MovementSheetRequest(MovementSheetMode.TRANSFER, account.id, null)
+                        }
+                    }
+                },
+                onAddMovement = {
+                    detailAccountId = null
+                    movementSheet = MovementSheetRequest(MovementSheetMode.EXPENSE, account.id, null)
+                },
+                onTransactionClick = { tx ->
+                    detailTransaction = tx
+                },
+            )
+        } else {
+            detailAccountId = null
+        }
+    }
+
+    detailScheduledId?.let { schedId ->
+        val item = state.scheduledPayments.firstOrNull { it.id == schedId }
+        if (item != null) {
+            ScheduledDetailSheet(
+                item = item,
+                accounts = state.accounts,
+                transactions = state.transactions,
+                hideBalances = state.hideBalances,
+                onDismiss = { detailScheduledId = null },
+                onExecuteNow = {
+                    viewModel.executeScheduledPaymentNow(item)
+                    detailScheduledId = null
+                },
+                onEdit = {
+                    detailScheduledId = null
+                    scheduledSheet = ScheduledSheetRequest(editing = item)
+                },
+                onDelete = {
+                    pendingDeleteScheduledFromDetail = item
+                },
+            )
+        } else {
+            detailScheduledId = null
+        }
+    }
+
+    detailKpiKind?.let { kind ->
+        AnalyticsKpiDetailSheet(
+            kind = kind,
+            state = state,
+            onDismiss = { detailKpiKind = null },
+        )
+    }
+
+    detailCategoryName?.let { catName ->
+        AnalyticsCategoryDetailSheet(
+            categoryName = catName,
+            state = state,
+            onDismiss = { detailCategoryName = null },
+            onEditCategoryBudget = { cat ->
+                detailCategoryName = null
+                budgetSheet = BudgetSheetRequest(preselectedCategory = cat)
+            },
+            onTransactionClick = { tx ->
+                detailTransaction = tx
+            },
+        )
+    }
+
+    detailTransaction?.let { tx ->
+        TransactionDetailSheet(
+            transaction = tx,
+            accounts = state.accounts,
+            categories = state.categories,
+            installmentPlans = state.installmentPlans,
+            hideBalances = state.hideBalances,
+            onDismiss = { detailTransaction = null },
+            onDelete = { target -> pendingDeleteTxFromDetail = target },
+        )
+    }
+
+    // Create / Edit Modal Bottom Sheets
     accountSheet?.let { req ->
         AddAccountSheet(
+            existingAccounts = state.accounts,
             editingAccount = req.editing,
             initialType = req.initialType,
             onDismiss = { accountSheet = null },
-            onSave = { account ->
-                viewModel.saveAccount(account)
+            onSave = { account, applyDisbursement ->
+                viewModel.saveAccount(account, applyDisbursement)
                 accountSheet = null
             },
         )
@@ -388,25 +632,27 @@ fun SaldoClaroApp(
     movementSheet?.let { req ->
         AddTransactionSheet(
             accounts = state.accounts,
+            categories = state.categories,
             initialMode = req.mode,
             preselectedAccountId = req.sourceAccountId,
             preselectedDestinationId = req.destinationAccountId,
+            initialDateMillis = req.initialDateMillis,
             onDismiss = { movementSheet = null },
             onCreateAccountFirst = {
                 accountSheet = AccountSheetRequest(
                     initialType = if (req.mode == MovementSheetMode.MSI) AccountType.CREDIT else AccountType.DEBIT
                 )
             },
-            onRecordIncomeOrExpense = { title, amount, type, category, accountId, dateMillis, note ->
-                viewModel.recordIncomeOrExpense(title, amount, type, category, accountId, dateMillis, note)
+            onRecordIncomeOrExpense = { title, amount, type, categoryName, accountId, dateMillis, note ->
+                viewModel.recordIncomeOrExpense(title, amount, type, categoryName, accountId, dateMillis, note)
                 movementSheet = null
             },
             onRecordTransfer = { title, amount, fromId, toId, dateMillis, note ->
                 viewModel.recordTransfer(title, amount, fromId, toId, dateMillis, note)
                 movementSheet = null
             },
-            onRecordInstallment = { cardId, desc, totalAmt, months, cat, dateMillis, note ->
-                viewModel.recordInstallmentPurchase(cardId, desc, totalAmt, months, cat, dateMillis, note)
+            onRecordInstallment = { cardId, desc, totalAmt, months, catName, dateMillis, note ->
+                viewModel.recordInstallmentPurchase(cardId, desc, totalAmt, months, catName, dateMillis, note)
                 movementSheet = null
             },
         )
@@ -415,6 +661,7 @@ fun SaldoClaroApp(
     scheduledSheet?.let { req ->
         AddScheduledSheet(
             accounts = state.accounts,
+            categories = state.categories,
             editingPayment = req.editing,
             initialKind = req.initialKind,
             onDismiss = { scheduledSheet = null },
@@ -426,12 +673,25 @@ fun SaldoClaroApp(
         )
     }
 
-    if (showBudgetSheet) {
+    categorySheet?.let { req ->
+        AddCategorySheet(
+            editingCategory = req.editing,
+            onDismiss = { categorySheet = null },
+            onSave = { category ->
+                viewModel.saveCategory(category)
+                categorySheet = null
+            },
+        )
+    }
+
+    budgetSheet?.let { req ->
         AddBudgetSheet(
-            onDismiss = { showBudgetSheet = false },
+            categories = state.categories,
+            preselectedCategory = req.preselectedCategory,
+            onDismiss = { budgetSheet = null },
             onSave = { category, limit ->
-                viewModel.saveBudget(category, limit)
-                showBudgetSheet = false
+                viewModel.updateCategoryBudget(category, limit)
+                budgetSheet = null
             },
         )
     }

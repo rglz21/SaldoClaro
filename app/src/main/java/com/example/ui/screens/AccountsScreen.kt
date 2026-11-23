@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +62,7 @@ import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
 import com.example.data.model.InstallmentPlanEntity
 import com.example.ui.components.EmptyFinanceCard
+import com.example.ui.components.FinanceComboBox
 import com.example.ui.components.PillBadge
 import com.example.ui.components.SectionHeader
 import com.example.ui.components.accountTypeIcon
@@ -82,6 +84,7 @@ private enum class AccountsFilter(val labelEs: String) {
 @Composable
 fun AccountsScreen(
     state: FinanceUiState,
+    onAccountClick: (AccountEntity) -> Unit,
     onAddAccount: (AccountType) -> Unit,
     onEditAccount: (AccountEntity) -> Unit,
     onDeleteAccount: (AccountEntity) -> Unit,
@@ -93,6 +96,10 @@ fun AccountsScreen(
     var accountPendingDelete by remember { mutableStateOf<AccountEntity?>(null) }
     var installmentPendingPay by remember { mutableStateOf<InstallmentPlanEntity?>(null) }
 
+    val debitAccounts = state.accounts.filter { it.accountType == AccountType.DEBIT }
+    val savingsAndCashAccounts = state.accounts.filter {
+        it.accountType == AccountType.SAVINGS || it.accountType == AccountType.CASH
+    }
     val liquidAccounts = state.accounts.filter { it.accountType.isLiquidAsset }
     val bankLoans = state.accounts.filter { it.accountType == AccountType.BANK_LOAN }
     val lentLoans = state.accounts.filter { it.accountType == AccountType.LENT_LOAN }
@@ -139,15 +146,16 @@ fun AccountsScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     } else {
-                        Text("Selecciona cuenta de pago:", style = MaterialTheme.typography.labelLarge)
-                        payers.forEach { acc ->
-                            FilterChip(
-                                selected = chosenPayerId == acc.id,
-                                onClick = { chosenPayerId = acc.id },
-                                label = { Text("${acc.name} (${FinanceFormatters.currency(acc.balance, state.hideBalances)})") },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
+                        FinanceComboBox(
+                            label = "Cuenta de pago",
+                            options = payers,
+                            selectedOption = payers.firstOrNull { it.id == chosenPayerId },
+                            optionLabel = { it.name },
+                            optionSubtitle = { "${it.accountType.shortLabelEs} · ${FinanceFormatters.currency(it.balance, state.hideBalances)}" },
+                            optionLeadingIcon = { accountTypeIcon(it.accountType) },
+                            onOptionSelected = { chosenPayerId = it.id },
+                            testTag = "msi_pay_account_combobox",
+                        )
                     }
                 }
             },
@@ -198,30 +206,63 @@ fun AccountsScreen(
             return@LazyColumn
         }
 
-        // 1. Liquid Accounts (Savings, Debit, Cash)
+        // 1. Debit & Savings/Cash Accounts (separated with exact subtotals like Neko)
         if (filter == AccountsFilter.ALL || filter == AccountsFilter.LIQUID) {
+            val debitSubtotal = debitAccounts.sumOf { it.balance }
             item {
                 SectionHeader(
-                    title = "Ahorro, Débito y Efectivo",
-                    actionLabel = "+ Agregar",
-                    onActionClick = { onAddAccount(AccountType.SAVINGS) },
+                    title = "Débito · ${FinanceFormatters.currency(debitSubtotal, state.hideBalances)}",
+                    actionLabel = "+ Débito",
+                    onActionClick = { onAddAccount(AccountType.DEBIT) },
                 )
             }
-            if (liquidAccounts.isEmpty()) {
+            if (debitAccounts.isEmpty()) {
                 item {
                     EmptyFinanceCard(
                         icon = Icons.Rounded.AccountBalance,
-                        title = "Sin cuentas de ahorro o débito",
-                        subtitle = "Agrega tus cuentas bancarias o efectivo para registrar ingresos, gastos y transferencias.",
+                        title = "Sin cuentas de débito",
+                        subtitle = "Agrega tus cuentas de débito o inversión para llevar el control exacto.",
                         actionLabel = "Crear cuenta",
                         onActionClick = { onAddAccount(AccountType.DEBIT) },
                     )
                 }
             } else {
-                items(liquidAccounts, key = { "liq_${it.id}" }) { acc ->
+                items(debitAccounts, key = { "deb_${it.id}" }) { acc ->
                     LiquidAccountCard(
                         account = acc,
                         hideBalances = state.hideBalances,
+                        onCardClick = { onAccountClick(acc) },
+                        onTransferClick = { onOpenMovementSheet(MovementSheetMode.TRANSFER, acc.id, null) },
+                        onEditClick = { onEditAccount(acc) },
+                        onDeleteClick = { accountPendingDelete = acc },
+                    )
+                }
+            }
+
+            val savingsSubtotal = savingsAndCashAccounts.sumOf { it.balance }
+            item {
+                SectionHeader(
+                    title = "Ahorros y Efectivo · ${FinanceFormatters.currency(savingsSubtotal, state.hideBalances)}",
+                    actionLabel = "+ Ahorro",
+                    onActionClick = { onAddAccount(AccountType.SAVINGS) },
+                )
+            }
+            if (savingsAndCashAccounts.isEmpty()) {
+                item {
+                    EmptyFinanceCard(
+                        icon = Icons.Rounded.AccountBalance,
+                        title = "Sin cuentas de ahorro o efectivo",
+                        subtitle = "Agrega tus cuentas bancarias de ahorro o efectivo.",
+                        actionLabel = "Crear ahorro",
+                        onActionClick = { onAddAccount(AccountType.SAVINGS) },
+                    )
+                }
+            } else {
+                items(savingsAndCashAccounts, key = { "sav_${it.id}" }) { acc ->
+                    LiquidAccountCard(
+                        account = acc,
+                        hideBalances = state.hideBalances,
+                        onCardClick = { onAccountClick(acc) },
                         onTransferClick = { onOpenMovementSheet(MovementSheetMode.TRANSFER, acc.id, null) },
                         onEditClick = { onEditAccount(acc) },
                         onDeleteClick = { accountPendingDelete = acc },
@@ -234,7 +275,7 @@ fun AccountsScreen(
         if (filter == AccountsFilter.ALL || filter == AccountsFilter.CREDIT) {
             item {
                 SectionHeader(
-                    title = "Tarjetas de Crédito",
+                    title = "Tarjetas de Crédito · ${FinanceFormatters.currency(state.creditDebtTotal, state.hideBalances)}",
                     actionLabel = "+ Tarjeta",
                     onActionClick = { onAddAccount(AccountType.CREDIT) },
                 )
@@ -254,6 +295,7 @@ fun AccountsScreen(
                     CreditCardDetailCard(
                         summary = summary,
                         hideBalances = state.hideBalances,
+                        onCardClick = { onAccountClick(summary.card) },
                         onPayCard = {
                             val payer = liquidAccounts.firstOrNull()?.id
                             onOpenMovementSheet(MovementSheetMode.TRANSFER, payer, summary.card.id)
@@ -273,7 +315,7 @@ fun AccountsScreen(
         if (filter == AccountsFilter.ALL || filter == AccountsFilter.LOANS) {
             item {
                 SectionHeader(
-                    title = "Préstamos Bancarios",
+                    title = "Préstamos · ${FinanceFormatters.currency(state.bankLoansTotal, state.hideBalances)}",
                     actionLabel = "+ Préstamo",
                     onActionClick = { onAddAccount(AccountType.BANK_LOAN) },
                 )
@@ -303,13 +345,19 @@ fun AccountsScreen(
                     }
                 }
             } else {
+                val accountMap = state.accounts.associateBy { it.id }
                 items(bankLoans, key = { "bl_${it.id}" }) { loan ->
+                    val linkedName = loan.linkedAccountId?.let { accountMap[it]?.name }
                     LoanCard(
                         account = loan,
                         isLent = false,
+                        linkedAccountName = linkedName,
                         hideBalances = state.hideBalances,
+                        onCardClick = { onAccountClick(loan) },
                         onActionClick = {
-                            val payer = liquidAccounts.firstOrNull()?.id
+                            val payer = loan.linkedAccountId
+                                ?.takeIf { id -> state.accounts.any { it.id == id } }
+                                ?: liquidAccounts.firstOrNull()?.id
                             onOpenMovementSheet(MovementSheetMode.TRANSFER, payer, loan.id)
                         },
                         onEdit = { onEditAccount(loan) },
@@ -320,7 +368,7 @@ fun AccountsScreen(
 
             item {
                 SectionHeader(
-                    title = "Préstamos Realizados (Por cobrar)",
+                    title = "Prestado (Por cobrar) · ${FinanceFormatters.currency(state.lentLoansTotal, state.hideBalances)}",
                     actionLabel = "+ Registrar",
                     onActionClick = { onAddAccount(AccountType.LENT_LOAN) },
                 )
@@ -350,13 +398,19 @@ fun AccountsScreen(
                     }
                 }
             } else {
+                val accountMap = state.accounts.associateBy { it.id }
                 items(lentLoans, key = { "ll_${it.id}" }) { loan ->
+                    val linkedName = loan.linkedAccountId?.let { accountMap[it]?.name }
                     LoanCard(
                         account = loan,
                         isLent = true,
+                        linkedAccountName = linkedName,
                         hideBalances = state.hideBalances,
+                        onCardClick = { onAccountClick(loan) },
                         onActionClick = {
-                            val dest = liquidAccounts.firstOrNull()?.id
+                            val dest = loan.linkedAccountId
+                                ?.takeIf { id -> state.accounts.any { it.id == id } }
+                                ?: liquidAccounts.firstOrNull()?.id
                             onOpenMovementSheet(MovementSheetMode.TRANSFER, loan.id, dest)
                         },
                         onEdit = { onEditAccount(loan) },
@@ -372,13 +426,17 @@ fun AccountsScreen(
 private fun LiquidAccountCard(
     account: AccountEntity,
     hideBalances: Boolean,
+    onCardClick: () -> Unit,
     onTransferClick: () -> Unit,
     onEditClick: () -> Unit,
     onDeleteClick: () -> Unit,
 ) {
     val financeColors = LocalFinanceColors.current
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .clickable(onClick = onCardClick),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -489,6 +547,7 @@ private fun LiquidAccountCard(
 private fun CreditCardDetailCard(
     summary: CreditCardSummary,
     hideBalances: Boolean,
+    onCardClick: () -> Unit,
     onPayCard: () -> Unit,
     onAddMsi: () -> Unit,
     onPayInstallment: (InstallmentPlanEntity) -> Unit,
@@ -504,7 +563,10 @@ private fun CreditCardDetailCard(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraLarge)
+            .clickable(onClick = onCardClick),
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -793,7 +855,9 @@ private fun CreditCardDetailCard(
 private fun LoanCard(
     account: AccountEntity,
     isLent: Boolean,
+    linkedAccountName: String?,
     hideBalances: Boolean,
+    onCardClick: () -> Unit,
     onActionClick: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -804,7 +868,10 @@ private fun LoanCard(
     val paidRatio = if (principal > 0.0) ((principal - account.balance) / principal).toFloat().coerceIn(0f, 1f) else 0f
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .clickable(onClick = onCardClick),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -843,6 +910,16 @@ private fun LoanCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (!linkedAccountName.isNullOrBlank()) {
+                        Text(
+                            text = if (isLent) "Desembolsado desde: $linkedAccountName"
+                            else "Desembolso en: $linkedAccountName",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
                 IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, contentDescription = "Editar préstamo") }
                 IconButton(onClick = onDelete) { Icon(Icons.Rounded.DeleteOutline, contentDescription = "Eliminar préstamo") }

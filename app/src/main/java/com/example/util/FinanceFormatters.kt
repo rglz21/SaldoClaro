@@ -75,7 +75,7 @@ object FinanceFormatters {
             val title = tx.title.replace(",", " ")
             val note = tx.note.replace(",", " ")
             sb.appendLine(
-                "$date,${tx.transactionType.labelEs},$title,${tx.financeCategory.labelEs},$from,$to,${String.format(Locale.US, "%.2f", tx.amount)},$note"
+                "$date,${tx.transactionType.labelEs},$title,${tx.categoryLabel},$from,$to,${String.format(Locale.US, "%.2f", tx.amount)},$note"
             )
         }
         return sb.toString()
