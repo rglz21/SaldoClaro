@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.EventRepeat
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material3.AlertDialog
@@ -81,6 +82,7 @@ fun ScheduledScreen(
     onToggleScheduled: (ScheduledPaymentEntity) -> Unit,
     onDeleteScheduled: (ScheduledPaymentEntity) -> Unit,
     onPayNow: (ScheduledPaymentEntity) -> Unit,
+    onOpenNotifications: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val financeColors = LocalFinanceColors.current
@@ -151,6 +153,16 @@ fun ScheduledScreen(
                                 style = MaterialTheme.typography.displaySmall.copy(fontFamily = JetBrainsMono),
                                 fontWeight = FontWeight.Bold,
                                 color = if (recurringNet >= 0) financeColors.income else financeColors.expense,
+                            )
+                        }
+                        IconButton(
+                            onClick = onOpenNotifications,
+                            modifier = Modifier.testTag("scheduled_notifications_button"),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.NotificationsActive,
+                                contentDescription = "Configurar recordatorios de pago",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                         }
                     }

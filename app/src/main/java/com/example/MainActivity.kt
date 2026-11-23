@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.EventRepeat
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -73,6 +74,7 @@ import com.example.data.model.CategoryEntity
 import com.example.data.model.RecurringKind
 import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
+import com.example.notifications.PaymentNotificationManager
 import com.example.ui.screens.AccountsScreen
 import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.AnalyticsTabMode
@@ -90,10 +92,14 @@ import com.example.ui.sheets.AnalyticsCategoryDetailSheet
 import com.example.ui.sheets.AnalyticsKpiDetailSheet
 import com.example.ui.sheets.AnalyticsKpiKind
 import com.example.ui.sheets.MovementSheetMode
+import com.example.ui.sheets.NotificationSettingsSheet
 import com.example.ui.sheets.ScheduledDetailSheet
 import com.example.ui.sheets.TransactionDetailSheet
 import com.example.ui.theme.SaldoClaroTheme
 import com.example.ui.viewmodel.FinanceViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 const val ROUTE_DASHBOARD = "dashboard"
 const val ROUTE_ACCOUNTS = "accounts"
@@ -145,9 +151,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val openCalendar = intent?.getBooleanExtra(PaymentNotificationManager.EXTRA_OPEN_CALENDAR, false) == true
         setContent {
             SaldoClaroTheme {
-                SaldoClaroApp()
+                SaldoClaroApp(openCalendarOnStart = openCalendar)
             }
         }
     }
@@ -156,6 +163,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SaldoClaroApp(
+    openCalendarOnStart: Boolean = false,
     viewModel: FinanceViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -164,6 +172,7 @@ fun SaldoClaroApp(
     val currentRoute = backStackEntry?.destination?.route ?: ROUTE_DASHBOARD
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val appScope = androidx.compose.runtime.rememberCoroutineScope()
 
     // Create / Edit Modal Requests
     var movementSheet by remember { mutableStateOf<MovementSheetRequest?>(null) }
@@ -171,6 +180,7 @@ fun SaldoClaroApp(
     var scheduledSheet by remember { mutableStateOf<ScheduledSheetRequest?>(null) }
     var categorySheet by remember { mutableStateOf<CategorySheetRequest?>(null) }
     var budgetSheet by remember { mutableStateOf<BudgetSheetRequest?>(null) }
+    var showNotificationSettings by remember { mutableStateOf(false) }
 
     // Sub-view modes
     var transactionsViewMode by remember { mutableStateOf(TransactionsViewMode.CALENDAR) }
@@ -184,6 +194,25 @@ fun SaldoClaroApp(
     var detailCategoryName by remember { mutableStateOf<String?>(null) }
     var pendingDeleteTxFromDetail by remember { mutableStateOf<TransactionEntity?>(null) }
     var pendingDeleteScheduledFromDetail by remember { mutableStateOf<ScheduledPaymentEntity?>(null) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            PaymentNotificationManager.ensureChannel(context)
+            val prefs = PaymentNotificationManager.getPreferences(context)
+            if (prefs.enabled && PaymentNotificationManager.hasNotificationPermission(context)) {
+                PaymentNotificationManager.scheduleDailyReminder(context)
+                PaymentNotificationManager.checkAndNotifyDueToday(context)
+            }
+        }
+        if (openCalendarOnStart) {
+            transactionsViewMode = TransactionsViewMode.CALENDAR
+            navController.navigate(ROUTE_TRANSACTIONS) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
 
     LaunchedEffect(state.snackbarMessage) {
         val message = state.snackbarMessage
@@ -333,6 +362,16 @@ fun SaldoClaroApp(
                             )
                         },
                         actions = {
+                            IconButton(
+                                onClick = { showNotificationSettings = true },
+                                modifier = Modifier.testTag("topbar_notifications_button"),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.NotificationsActive,
+                                    contentDescription = "Recordatorios de pago",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                             if (currentRoute != ROUTE_ANALYTICS || analyticsTabMode != AnalyticsTabMode.CATEGORIES) {
                                 IconButton(
                                     onClick = {
@@ -463,6 +502,9 @@ fun SaldoClaroApp(
                                     movementSheet = MovementSheetRequest(mode = mode, initialDateMillis = dateMillis)
                                 },
                                 onDeleteTransaction = viewModel::deleteTransaction,
+                                onScheduledClick = { item -> detailScheduledId = item.id },
+                                onExecuteScheduledNow = viewModel::executeScheduledPaymentNow,
+                                onAccountClick = { acc -> detailAccountId = acc.id },
                             )
                         }
                         composable(ROUTE_SCHEDULED) {
@@ -474,6 +516,7 @@ fun SaldoClaroApp(
                                 onToggleScheduled = viewModel::toggleScheduledPayment,
                                 onDeleteScheduled = viewModel::deleteScheduledPayment,
                                 onPayNow = viewModel::executeScheduledPaymentNow,
+                                onOpenNotifications = { showNotificationSettings = true },
                             )
                         }
                         composable(ROUTE_ANALYTICS) {
@@ -692,6 +735,18 @@ fun SaldoClaroApp(
             onSave = { category, limit ->
                 viewModel.updateCategoryBudget(category, limit)
                 budgetSheet = null
+            },
+        )
+    }
+
+    if (showNotificationSettings) {
+        NotificationSettingsSheet(
+            accounts = state.accounts,
+            scheduledPayments = state.scheduledPayments,
+            hideBalances = state.hideBalances,
+            onDismiss = { showNotificationSettings = false },
+            onStatusMessage = { msg ->
+                appScope.launch { snackbarHostState.showSnackbar(msg) }
             },
         )
     }

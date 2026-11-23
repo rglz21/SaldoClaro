@@ -51,6 +51,7 @@ import com.example.data.model.RecurrenceFrequency
 import com.example.data.model.RecurringKind
 import com.example.data.model.ScheduledPaymentEntity
 import com.example.ui.components.FinanceComboBox
+import com.example.ui.components.GestureSafeModalBottomSheet
 import com.example.ui.components.accountTypeIcon
 import com.example.ui.components.categoryIconByName
 import com.example.util.DateMath
@@ -144,7 +145,7 @@ fun AddScheduledSheet(
         }
     }
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {

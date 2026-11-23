@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -9,9 +10,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,10 +51,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.model.AccountEntity
+import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
 import com.example.ui.components.CalendarCashflowView
@@ -88,9 +96,22 @@ fun TransactionsScreen(
     onTransactionClick: (TransactionEntity) -> Unit,
     onOpenAddMovement: (MovementSheetMode, Long?) -> Unit,
     onDeleteTransaction: (Long) -> Unit,
+    onScheduledClick: (ScheduledPaymentEntity) -> Unit = {},
+    onExecuteScheduledNow: (ScheduledPaymentEntity) -> Unit = {},
+    onAccountClick: (AccountEntity) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val financeColors = LocalFinanceColors.current
+    val density = LocalDensity.current
+    val isImeVisible = WindowInsets.ime.getBottom(density) > 0
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    BackHandler(enabled = isImeVisible) {
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var typeFilter by remember { mutableStateOf(TxTypeFilter.ALL) }
     var pendingDelete by remember { mutableStateOf<TransactionEntity?>(null) }
@@ -175,10 +196,14 @@ fun TransactionsScreen(
                 transactions = state.transactions,
                 accounts = state.accounts,
                 categories = state.categories,
+                scheduledPayments = state.scheduledPayments,
                 hideBalances = state.hideBalances,
                 onAddForDate = { dateMillis -> onOpenAddMovement(MovementSheetMode.EXPENSE, dateMillis) },
                 onTransactionClick = onTransactionClick,
                 onRequestDelete = { tx -> pendingDelete = tx },
+                onScheduledClick = onScheduledClick,
+                onExecuteScheduledNow = onExecuteScheduledNow,
+                onAccountClick = onAccountClick,
                 modifier = Modifier.weight(1f),
             )
         } else {

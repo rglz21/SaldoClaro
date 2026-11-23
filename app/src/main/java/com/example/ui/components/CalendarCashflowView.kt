@@ -24,8 +24,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.CheckCircleOutline
+import androidx.compose.material.icons.rounded.CreditCard
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Event
+import androidx.compose.material.icons.rounded.Handshake
+import androidx.compose.material.icons.rounded.ReceiptLong
+import androidx.compose.material.icons.rounded.Subscriptions
+import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -57,12 +65,16 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
 import com.example.data.model.CategoryEntity
+import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalFinanceColors
+import com.example.util.CalendarProjector
 import com.example.util.DateMath
 import com.example.util.FinanceFormatters
+import com.example.util.ProjectedCalendarEvent
+import com.example.util.ProjectedEventKind
 import java.util.Calendar
 import java.util.Locale
 
@@ -105,10 +117,14 @@ fun CalendarCashflowView(
     transactions: List<TransactionEntity>,
     accounts: List<AccountEntity>,
     categories: List<CategoryEntity>,
+    scheduledPayments: List<ScheduledPaymentEntity>,
     hideBalances: Boolean,
     onAddForDate: (Long) -> Unit,
     onTransactionClick: (TransactionEntity) -> Unit,
     onRequestDelete: (TransactionEntity) -> Unit,
+    onScheduledClick: (ScheduledPaymentEntity) -> Unit = {},
+    onExecuteScheduledNow: (ScheduledPaymentEntity) -> Unit = {},
+    onAccountClick: (AccountEntity) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val financeColors = LocalFinanceColors.current
@@ -119,8 +135,10 @@ fun CalendarCashflowView(
     var displayedMonth by remember { mutableIntStateOf(todayCal.get(Calendar.MONTH)) }
     var selectedDayStart by remember { mutableLongStateOf(todayStart) }
     var includeCardPaymentsInCells by remember { mutableStateOf(true) }
+    var showProjectedEvents by remember { mutableStateOf(true) }
 
     val accountMap = remember(accounts) { accounts.associateBy { it.id } }
+    val scheduledMap = remember(scheduledPayments) { scheduledPayments.associateBy { it.id } }
     val categoryMap = remember(categories) { categories.associateBy { it.name.lowercase(Locale.ROOT) } }
 
     // Group all transactions by start-of-day
@@ -191,6 +209,16 @@ fun CalendarCashflowView(
     val leadingEmptyCells = monthMeta.second
     val monthDayMillis = monthMeta.third
 
+    val projectedByDay = remember(displayedYear, displayedMonth, accounts, scheduledPayments, todayStart) {
+        CalendarProjector.projectMonth(
+            year = displayedYear,
+            month = displayedMonth,
+            accounts = accounts,
+            scheduledPayments = scheduledPayments,
+            todayStartMillis = todayStart,
+        )
+    }
+
     val monthTotals = remember(monthDayMillis, txByDay) {
         var inc = 0.0
         var exp = 0.0
@@ -204,7 +232,24 @@ fun CalendarCashflowView(
         Pair(inc, exp)
     }
 
+    val monthProjectedSummary = remember(projectedByDay) {
+        var projIn = 0.0
+        var projOut = 0.0
+        var eventCount = 0
+        projectedByDay.values.forEach { list ->
+            list.forEach { ev ->
+                eventCount += 1
+                if (ev.isInflow) projIn += ev.amount
+                if (ev.isOutflow) projOut += ev.amount
+            }
+        }
+        Triple(projIn, projOut, eventCount)
+    }
+
     val selectedDayFlow = txByDay[selectedDayStart] ?: DayFlowTotals()
+    val selectedDayProjected = if (showProjectedEvents) {
+        projectedByDay[selectedDayStart].orEmpty()
+    } else emptyList()
 
     // Account breakdown for the selected day
     val accountSummaries = remember(selectedDayFlow.transactions, accountMap) {
@@ -360,46 +405,92 @@ fun CalendarCashflowView(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            MiniFlowColumn(
-                                label = "Ingresos mes",
-                                value = FinanceFormatters.currency(monthTotals.first, hideBalances),
-                                color = financeColors.income,
-                                alignment = Alignment.Start,
-                                modifier = Modifier.weight(1f),
-                            )
-                            MiniFlowColumn(
-                                label = "Gastos mes",
-                                value = FinanceFormatters.currency(monthTotals.second, hideBalances),
-                                color = financeColors.expense,
-                                alignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.weight(1f),
-                            )
-                            MiniFlowColumn(
-                                label = "Balance",
-                                value = FinanceFormatters.currency(monthNet, hideBalances, showSign = true),
-                                color = if (monthNet >= 0) financeColors.income else financeColors.expense,
-                                alignment = Alignment.End,
-                                modifier = Modifier.weight(1f),
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                MiniFlowColumn(
+                                    label = "Ingresos mes",
+                                    value = FinanceFormatters.currency(monthTotals.first, hideBalances),
+                                    color = financeColors.income,
+                                    alignment = Alignment.Start,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                MiniFlowColumn(
+                                    label = "Gastos mes",
+                                    value = FinanceFormatters.currency(monthTotals.second, hideBalances),
+                                    color = financeColors.expense,
+                                    alignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                MiniFlowColumn(
+                                    label = "Balance",
+                                    value = FinanceFormatters.currency(monthNet, hideBalances, showSign = true),
+                                    color = if (monthNet >= 0) financeColors.income else financeColors.expense,
+                                    alignment = Alignment.End,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            if (showProjectedEvents && monthProjectedSummary.third > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "Proyectado (${monthProjectedSummary.third})",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        if (monthProjectedSummary.first > 0.0) {
+                                            Text(
+                                                text = "+${FinanceFormatters.currency(monthProjectedSummary.first, hideBalances)}",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
+                                                fontWeight = FontWeight.Bold,
+                                                color = financeColors.income,
+                                            )
+                                        }
+                                        if (monthProjectedSummary.second > 0.0) {
+                                            Text(
+                                                text = "-${FinanceFormatters.currency(monthProjectedSummary.second, hideBalances)}",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
+                                                fontWeight = FontWeight.Bold,
+                                                color = financeColors.expense,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    // Toggle whether credit-card payments count in daily cell outflow (like Neko Flujo)
+                    // Filter chips for Calendar display options
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = "Montos exactos (sin redondeo)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        FilterChip(
+                            selected = showProjectedEvents,
+                            onClick = { showProjectedEvents = !showProjectedEvents },
+                            label = {
+                                Text(
+                                    text = if (showProjectedEvents) "Con proyectados" else "Sin proyectados",
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
+                            modifier = Modifier
+                                .height(28.dp)
+                                .testTag("calendar_toggle_projected"),
                         )
                         FilterChip(
                             selected = includeCardPaymentsInCells,
@@ -446,15 +537,32 @@ fun CalendarCashflowView(
                                     if (dayIndex in monthDayMillis.indices) {
                                         val dayMs = monthDayMillis[dayIndex]
                                         val flow = txByDay[dayMs]
+                                        val dayProjected = if (showProjectedEvents) projectedByDay[dayMs].orEmpty() else emptyList()
+                                        val projIn = dayProjected.filter { it.isInflow }.sumOf { it.amount }
+                                        val projOut = dayProjected.filter { it.isOutflow }.sumOf { it.amount }
+                                        val hasCardCutoffOrDue = dayProjected.any {
+                                            it.kind == ProjectedEventKind.CARD_CUTOFF ||
+                                                it.kind == ProjectedEventKind.CARD_PAYMENT_DUE
+                                        }
+                                        val hasLoanEvent = dayProjected.any {
+                                            it.kind == ProjectedEventKind.BANK_LOAN_PAYMENT ||
+                                                it.kind == ProjectedEventKind.LENT_LOAN_COLLECTION
+                                        }
                                         val isSelected = dayMs == selectedDayStart
                                         val isToday = dayMs == todayStart
-                                        val cellOutflow = (flow?.expense ?: 0.0) +
+                                        val realizedOut = (flow?.expense ?: 0.0) +
                                             if (includeCardPaymentsInCells) (flow?.cardPayments ?: 0.0) else 0.0
+                                        val totalCellIn = (flow?.totalInflow ?: 0.0) + projIn
+                                        val totalCellOut = realizedOut + projOut
+
                                         CalendarDayCell(
                                             dayNumber = dayIndex + 1,
-                                            income = flow?.totalInflow ?: 0.0,
-                                            expense = cellOutflow,
+                                            income = totalCellIn,
+                                            expense = totalCellOut,
                                             hasTransfers = (flow?.transferCount ?: 0) > 0,
+                                            hasProjected = dayProjected.isNotEmpty(),
+                                            hasCardMarker = hasCardCutoffOrDue,
+                                            hasLoanMarker = hasLoanEvent,
                                             isSelected = isSelected,
                                             isToday = isToday,
                                             hideBalances = hideBalances,
@@ -740,14 +848,40 @@ fun CalendarCashflowView(
             }
         }
 
+        // Scheduled / Projected Events for Selected Day
+        if (selectedDayProjected.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = "Programados y vencimientos (${selectedDayProjected.size})",
+                )
+            }
+            items(selectedDayProjected, key = { it.id }) { event ->
+                val scheduledEntity = event.scheduledPaymentId?.let { scheduledMap[it] }
+                val linkedAccount = event.accountId?.let { accountMap[it] }
+                ProjectedEventCard(
+                    event = event,
+                    hideBalances = hideBalances,
+                    onClick = {
+                        when {
+                            scheduledEntity != null -> onScheduledClick(scheduledEntity)
+                            linkedAccount != null -> onAccountClick(linkedAccount)
+                        }
+                    },
+                    onQuickExecute = if (scheduledEntity != null && scheduledEntity.isActive) {
+                        { onExecuteScheduledNow(scheduledEntity) }
+                    } else null,
+                )
+            }
+        }
+
         // Detailed Transactions List for Selected Day
         item {
             SectionHeader(
-                title = "Detalle del día (${selectedDayFlow.transactions.size})",
+                title = "Movimientos registrados (${selectedDayFlow.transactions.size})",
             )
         }
 
-        if (selectedDayFlow.transactions.isEmpty()) {
+        if (selectedDayFlow.transactions.isEmpty() && selectedDayProjected.isEmpty()) {
             item {
                 EmptyFinanceCard(
                     icon = Icons.Rounded.CalendarMonth,
@@ -756,6 +890,21 @@ fun CalendarCashflowView(
                     actionLabel = "Registrar en esta fecha",
                     onActionClick = { onAddForDate(selectedDayStart + 43_200_000L) },
                 )
+            }
+        } else if (selectedDayFlow.transactions.isEmpty()) {
+            item {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = "Aún no hay movimientos registrados en esta fecha; arriba ves los eventos programados.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(14.dp),
+                    )
+                }
             }
         } else {
             items(selectedDayFlow.transactions, key = { "cal_tx_${it.id}" }) { tx ->
@@ -860,11 +1009,177 @@ fun CalendarCashflowView(
 }
 
 @Composable
+private fun ProjectedEventCard(
+    event: ProjectedCalendarEvent,
+    hideBalances: Boolean,
+    onClick: () -> Unit,
+    onQuickExecute: (() -> Unit)? = null,
+) {
+    val financeColors = LocalFinanceColors.current
+    val (icon, tint, container) = when (event.kind) {
+        ProjectedEventKind.RECURRING_INCOME -> Triple(
+            Icons.Rounded.TrendingUp,
+            financeColors.income,
+            financeColors.incomeContainer,
+        )
+        ProjectedEventKind.SUBSCRIPTION -> Triple(
+            Icons.Rounded.Subscriptions,
+            financeColors.transfer,
+            financeColors.transferContainer,
+        )
+        ProjectedEventKind.RECURRING_BILL -> Triple(
+            Icons.Rounded.Bolt,
+            financeColors.warning,
+            financeColors.warningContainer,
+        )
+        ProjectedEventKind.CARD_CUTOFF -> Triple(
+            Icons.Rounded.Event,
+            MaterialTheme.colorScheme.tertiary,
+            MaterialTheme.colorScheme.tertiaryContainer,
+        )
+        ProjectedEventKind.CARD_PAYMENT_DUE -> Triple(
+            Icons.Rounded.CreditCard,
+            financeColors.expense,
+            financeColors.expenseContainer,
+        )
+        ProjectedEventKind.BANK_LOAN_PAYMENT -> Triple(
+            Icons.Rounded.ReceiptLong,
+            financeColors.warning,
+            financeColors.warningContainer,
+        )
+        ProjectedEventKind.LENT_LOAN_COLLECTION -> Triple(
+            Icons.Rounded.Handshake,
+            financeColors.income,
+            financeColors.incomeContainer,
+        )
+    }
+
+    val amountPrefix = when {
+        event.isInflow -> "+"
+        event.isOutflow -> "-"
+        else -> ""
+    }
+    val amountColor = when {
+        event.isInflow -> financeColors.income
+        event.isOutflow -> financeColors.expense
+        else -> tint
+    }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, tint.copy(alpha = 0.45f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
+            .testTag("calendar_projected_${event.id}"),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(container),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = event.kind.labelEs,
+                    tint = tint,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = event.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    PillBadge(
+                        text = event.kind.shortBadge,
+                        containerColor = container,
+                        contentColor = tint,
+                    )
+                }
+                Text(
+                    text = event.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (event.amount > 0.0) {
+                    Text(
+                        text = "$amountPrefix${FinanceFormatters.currency(event.amount, hideBalances)}",
+                        style = MaterialTheme.typography.titleSmall.copy(fontFamily = JetBrainsMono),
+                        fontWeight = FontWeight.Bold,
+                        color = amountColor,
+                    )
+                } else {
+                    Text(
+                        text = "Aviso",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tint,
+                    )
+                }
+                if (onQuickExecute != null) {
+                    Surface(
+                        color = container,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onQuickExecute),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircleOutline,
+                                contentDescription = "Registrar hoy",
+                                tint = tint,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Text(
+                                text = "Registrar",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = tint,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CalendarDayCell(
     dayNumber: Int,
     income: Double,
     expense: Double,
     hasTransfers: Boolean,
+    hasProjected: Boolean,
+    hasCardMarker: Boolean,
+    hasLoanMarker: Boolean,
     isSelected: Boolean,
     isToday: Boolean,
     hideBalances: Boolean,
@@ -874,22 +1189,24 @@ private fun CalendarDayCell(
     val financeColors = LocalFinanceColors.current
     val bgColor = when {
         isSelected -> MaterialTheme.colorScheme.primaryContainer
+        hasProjected -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
         income > 0.0 || expense > 0.0 || hasTransfers -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
         else -> Color.Transparent
     }
     val borderColor = when {
         isSelected -> MaterialTheme.colorScheme.primary
-        isToday -> MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+        isToday -> MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+        hasProjected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
         else -> Color.Transparent
     }
 
     Column(
         modifier = modifier
-            .height(64.dp)
+            .height(66.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(bgColor)
             .border(
-                width = if (isSelected) 1.5.dp else if (isToday) 1.dp else 0.dp,
+                width = if (isSelected) 1.5.dp else if (isToday || hasProjected) 1.dp else 0.dp,
                 color = borderColor,
                 shape = RoundedCornerShape(10.dp),
             )
@@ -905,11 +1222,28 @@ private fun CalendarDayCell(
             Text(
                 text = dayNumber.toString(),
                 style = MaterialTheme.typography.labelSmall,
-                fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Medium,
+                fontWeight = if (isSelected || isToday || hasProjected) FontWeight.Bold else FontWeight.Medium,
                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                else if (hasProjected) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.onSurface,
             )
-            if (hasTransfers) {
+            if (hasCardMarker) {
+                Box(
+                    modifier = Modifier
+                        .size(4.5.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.tertiary),
+                )
+            }
+            if (hasLoanMarker) {
+                Box(
+                    modifier = Modifier
+                        .size(4.5.dp)
+                        .clip(CircleShape)
+                        .background(financeColors.warning),
+                )
+            }
+            if (hasTransfers && !hasCardMarker) {
                 Box(
                     modifier = Modifier
                         .size(4.dp)
@@ -941,6 +1275,18 @@ private fun CalendarDayCell(
                     fontFamily = JetBrainsMono,
                     fontWeight = FontWeight.Bold,
                     color = financeColors.expense,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Clip,
+                )
+            }
+            if (income <= 0.0 && expense <= 0.0 && hasProjected) {
+                Text(
+                    text = if (hasCardMarker) "TDC" else if (hasLoanMarker) "Prést." else "Prog.",
+                    fontSize = 7.sp,
+                    lineHeight = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (hasCardMarker) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Clip,

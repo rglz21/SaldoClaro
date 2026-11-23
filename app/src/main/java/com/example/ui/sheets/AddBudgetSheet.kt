@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.CategoryEntity
 import com.example.ui.components.AvailableCategoryIcons
 import com.example.ui.components.FinanceComboBox
+import com.example.ui.components.GestureSafeModalBottomSheet
 import com.example.ui.components.categoryIconByName
 import com.example.util.FinanceFormatters
 
@@ -74,7 +75,7 @@ fun AddCategorySheet(
     }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
@@ -214,7 +215,7 @@ fun AddBudgetSheet(
     }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {

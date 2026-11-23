@@ -53,6 +53,7 @@ import com.example.data.model.AccountType
 import com.example.data.model.CategoryEntity
 import com.example.data.model.TransactionType
 import com.example.ui.components.FinanceComboBox
+import com.example.ui.components.GestureSafeModalBottomSheet
 import com.example.ui.components.accountTypeIcon
 import com.example.ui.components.categoryIconByName
 import com.example.ui.theme.JetBrainsMono
@@ -185,7 +186,7 @@ fun AddTransactionSheet(
         }
     }
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {

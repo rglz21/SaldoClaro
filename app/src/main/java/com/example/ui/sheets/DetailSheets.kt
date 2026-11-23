@@ -59,6 +59,7 @@ import com.example.data.model.RecurringKind
 import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
+import com.example.ui.components.GestureSafeModalBottomSheet
 import com.example.ui.components.PillBadge
 import com.example.ui.components.accountTypeIcon
 import com.example.ui.components.categoryColorByName
@@ -116,7 +117,7 @@ fun AccountDetailSheet(
 
     val linkedAccountName = account.linkedAccountId?.let { accountMap[it]?.name }
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
@@ -552,7 +553,7 @@ fun TransactionDetailSheet(
         else -> "Transferencia"
     }
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
@@ -722,7 +723,7 @@ fun ScheduledDetailSheet(
         else -> financeColors.warningContainer
     }
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {

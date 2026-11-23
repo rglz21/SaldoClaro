@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.CategoryEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
+import com.example.ui.components.GestureSafeModalBottomSheet
 import com.example.ui.components.categoryColorByName
 import com.example.ui.components.categoryIconByName
 import com.example.ui.theme.JetBrainsMono
@@ -71,7 +72,7 @@ fun AnalyticsKpiDetailSheet(
     val financeColors = LocalFinanceColors.current
     val analytics = state.analytics
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
@@ -331,7 +332,7 @@ fun AnalyticsCategoryDetailSheet(
             .sumOf { it.amount }
     }
 
-    ModalBottomSheet(
+    GestureSafeModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {

@@ -1,15 +1,19 @@
 package com.example.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,11 +53,17 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +73,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.AccountType
 import com.example.data.model.FinanceCategory
 import com.example.ui.theme.ChartPalette
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 data class CategoryIconOption(
@@ -178,6 +192,73 @@ fun isLoanRepaymentCollection(
         tx.categoryLabel.equals("Cobro de Préstamo", ignoreCase = true)
 }
 
+/**
+ * ModalBottomSheet compatible with Android gesture navigation and software keyboard (IME):
+ * While the keyboard is visible (or during the brief cooldown right after it hides), a back gesture
+ * ONLY dismisses the keyboard and clears text focus without closing the form sheet.
+ * Once the keyboard is closed, the next back gesture dismisses the sheet smoothly.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GestureSafeModalBottomSheet(
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val outerDensity = LocalDensity.current
+    val outerImeVisible = WindowInsets.ime.getBottom(outerDensity) > 0
+    var innerImeVisible by remember { mutableStateOf(false) }
+    val isImeVisible = outerImeVisible || innerImeVisible
+
+    var hadImeOpen by remember { mutableStateOf(false) }
+    var imeCooldownActive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isImeVisible) {
+        if (isImeVisible) {
+            hadImeOpen = true
+            imeCooldownActive = true
+        } else if (hadImeOpen) {
+            delay(450L)
+            imeCooldownActive = false
+            hadImeOpen = false
+        }
+    }
+
+    val blockBackDismiss = isImeVisible || imeCooldownActive
+    val outerKeyboardController = LocalSoftwareKeyboardController.current
+
+    ModalBottomSheet(
+        onDismissRequest = {
+            outerKeyboardController?.hide()
+            onDismissRequest()
+        },
+        sheetState = sheetState,
+        properties = ModalBottomSheetProperties(
+            shouldDismissOnBackPress = !blockBackDismiss,
+        ),
+        modifier = modifier,
+    ) {
+        val sheetDensity = LocalDensity.current
+        val sheetImeVisible = WindowInsets.ime.getBottom(sheetDensity) > 0
+        val sheetKeyboardController = LocalSoftwareKeyboardController.current
+        val sheetFocusManager = LocalFocusManager.current
+
+        SideEffect {
+            if (innerImeVisible != sheetImeVisible) {
+                innerImeVisible = sheetImeVisible
+            }
+        }
+
+        BackHandler(enabled = blockBackDismiss) {
+            sheetKeyboardController?.hide()
+            sheetFocusManager.clearFocus(force = true)
+        }
+
+        content()
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun <T> FinanceComboBox(
@@ -194,11 +275,22 @@ fun <T> FinanceComboBox(
     testTag: String = "combo_box",
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val displayText = selectedOption?.let(optionLabel).orEmpty()
 
     ExposedDropdownMenuBox(
         expanded = expanded && enabled,
-        onExpandedChange = { if (enabled) expanded = !expanded },
+        onExpandedChange = {
+            if (enabled) {
+                val next = !expanded
+                if (next) {
+                    keyboardController?.hide()
+                    focusManager.clearFocus(force = true)
+                }
+                expanded = next
+            }
+        },
         modifier = modifier.fillMaxWidth(),
     ) {
         OutlinedTextField(
