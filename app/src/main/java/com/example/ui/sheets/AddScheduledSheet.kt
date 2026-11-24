@@ -52,9 +52,9 @@ import com.example.data.model.CategoryEntity
 import com.example.data.model.RecurrenceFrequency
 import com.example.data.model.RecurringKind
 import com.example.data.model.ScheduledPaymentEntity
+import com.example.ui.components.AccountPickerField
 import com.example.ui.components.FinanceComboBox
 import com.example.ui.components.GestureSafeModalBottomSheet
-import com.example.ui.components.accountTypeIcon
 import com.example.ui.components.categoryIconByName
 import com.example.util.DateMath
 import com.example.util.FinanceFormatters
@@ -67,8 +67,9 @@ fun AddScheduledSheet(
     editingPayment: ScheduledPaymentEntity? = null,
     initialKind: RecurringKind = RecurringKind.ONE_TIME_PAYMENT,
     initialDateMillis: Long? = null,
+    hideBalances: Boolean = false,
     onDismiss: () -> Unit,
-    onCreateAccountFirst: () -> Unit,
+    onCreateAccountFirst: (AccountType) -> Unit,
     onSave: (ScheduledPaymentEntity) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -228,7 +229,7 @@ fun AddScheduledSheet(
                         Button(
                             onClick = {
                                 onDismiss()
-                                onCreateAccountFirst()
+                                onCreateAccountFirst(AccountType.DEBIT)
                             },
                             shape = RoundedCornerShape(12.dp),
                         ) {
@@ -311,14 +312,20 @@ fun AddScheduledSheet(
                     .testTag("scheduled_amount_input"),
             )
 
-            FinanceComboBox(
+            AccountPickerField(
                 label = if (kind.isIncome) "Cuenta donde ingresa el dinero" else "Cuenta o tarjeta asociada",
-                options = eligibleAccounts,
-                selectedOption = eligibleAccounts.firstOrNull { it.id == selectedAccountId },
-                optionLabel = { it.name },
-                optionSubtitle = { "${it.accountType.shortLabelEs} · ${FinanceFormatters.currency(it.balance)}" },
-                optionLeadingIcon = { accountTypeIcon(it.accountType) },
-                onOptionSelected = { selectedAccountId = it.id },
+                accounts = eligibleAccounts,
+                selectedAccount = eligibleAccounts.firstOrNull { it.id == selectedAccountId },
+                hideBalances = hideBalances,
+                onAccountSelected = { acc ->
+                    if (acc != null) {
+                        selectedAccountId = acc.id
+                        errorMessage = null
+                    }
+                },
+                onAddAccount = { suggestedType ->
+                    onCreateAccountFirst(if (kind.isIncome) AccountType.DEBIT else suggestedType)
+                },
                 testTag = "scheduled_account_combobox",
             )
 

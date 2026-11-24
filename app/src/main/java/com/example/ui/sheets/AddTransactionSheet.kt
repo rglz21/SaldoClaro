@@ -52,9 +52,9 @@ import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
 import com.example.data.model.CategoryEntity
 import com.example.data.model.TransactionType
+import com.example.ui.components.AccountPickerField
 import com.example.ui.components.FinanceComboBox
 import com.example.ui.components.GestureSafeModalBottomSheet
-import com.example.ui.components.accountTypeIcon
 import com.example.ui.components.categoryIconByName
 import com.example.ui.theme.JetBrainsMono
 import com.example.util.DateMath
@@ -88,8 +88,9 @@ fun AddTransactionSheet(
     preselectedAccountId: Long? = null,
     preselectedDestinationId: Long? = null,
     initialDateMillis: Long? = null,
+    hideBalances: Boolean = false,
     onDismiss: () -> Unit,
-    onCreateAccountFirst: () -> Unit,
+    onCreateAccountFirst: (AccountType) -> Unit,
     onRecordIncomeOrExpense: (
         title: String,
         amount: Double,
@@ -237,7 +238,7 @@ fun AddTransactionSheet(
                         Button(
                             onClick = {
                                 onDismiss()
-                                onCreateAccountFirst()
+                                onCreateAccountFirst(AccountType.DEBIT)
                             },
                             shape = RoundedCornerShape(12.dp),
                         ) {
@@ -267,7 +268,7 @@ fun AddTransactionSheet(
                         Button(
                             onClick = {
                                 onDismiss()
-                                onCreateAccountFirst()
+                                onCreateAccountFirst(AccountType.CREDIT)
                             },
                             shape = RoundedCornerShape(12.dp),
                         ) {
@@ -316,46 +317,50 @@ fun AddTransactionSheet(
                     .testTag("tx_title_input"),
             )
 
-            // Source Account ComboBox
+            // Source Account Picker Sheet
             val selectableAccounts = if (mode == MovementSheetMode.MSI) creditCards else accounts
             val selectedAccount = selectableAccounts.firstOrNull { it.id == selectedAccountId }
-            FinanceComboBox(
+            AccountPickerField(
                 label = when (mode) {
                     MovementSheetMode.EXPENSE -> "Cuenta o tarjeta de cargo"
                     MovementSheetMode.INCOME -> "Cuenta donde entra el dinero"
                     MovementSheetMode.TRANSFER -> "Cuenta origen"
                     MovementSheetMode.MSI -> "Tarjeta de crédito"
                 },
-                options = selectableAccounts,
-                selectedOption = selectedAccount,
-                optionLabel = { it.name },
-                optionSubtitle = { "${it.accountType.shortLabelEs} · ${FinanceFormatters.currency(it.balance)}" },
-                optionLeadingIcon = { accountTypeIcon(it.accountType) },
-                onOptionSelected = { acc ->
-                    selectedAccountId = acc.id
-                    if (destinationAccountId == acc.id) {
-                        destinationAccountId = accounts.firstOrNull { it.id != acc.id }?.id
+                accounts = selectableAccounts,
+                selectedAccount = selectedAccount,
+                hideBalances = hideBalances,
+                onAccountSelected = { acc ->
+                    if (acc != null) {
+                        selectedAccountId = acc.id
+                        if (destinationAccountId == acc.id) {
+                            destinationAccountId = accounts.firstOrNull { it.id != acc.id }?.id
+                        }
+                        errorMessage = null
                     }
-                    errorMessage = null
+                },
+                onAddAccount = { suggestedType ->
+                    onCreateAccountFirst(if (mode == MovementSheetMode.MSI) AccountType.CREDIT else suggestedType)
                 },
                 testTag = "tx_source_account_combobox",
             )
 
-            // Destination Account ComboBox for Transfer
+            // Destination Account Picker Sheet for Transfer
             if (mode == MovementSheetMode.TRANSFER && accounts.size >= 2) {
                 val destOptions = accounts.filter { it.id != selectedAccountId }
                 val selectedDest = destOptions.firstOrNull { it.id == destinationAccountId }
-                FinanceComboBox(
+                AccountPickerField(
                     label = "Cuenta, tarjeta o préstamo destino",
-                    options = destOptions,
-                    selectedOption = selectedDest,
-                    optionLabel = { it.name },
-                    optionSubtitle = { "${it.accountType.shortLabelEs} · ${FinanceFormatters.currency(it.balance)}" },
-                    optionLeadingIcon = { accountTypeIcon(it.accountType) },
-                    onOptionSelected = {
-                        destinationAccountId = it.id
-                        errorMessage = null
+                    accounts = destOptions,
+                    selectedAccount = selectedDest,
+                    hideBalances = hideBalances,
+                    onAccountSelected = { acc ->
+                        if (acc != null) {
+                            destinationAccountId = acc.id
+                            errorMessage = null
+                        }
                     },
+                    onAddAccount = { suggestedType -> onCreateAccountFirst(suggestedType) },
                     testTag = "tx_dest_account_combobox",
                 )
             }

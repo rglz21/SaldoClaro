@@ -45,7 +45,11 @@ object InitialDataSeeder {
     suspend fun seedIfNeeded(context: Context, database: FinanceDatabase) {
         val dao = database.financeDao()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (prefs.getBoolean(KEY_SEEDED_CSV, false)) {
+        val hasExistingUserData = dao.countAccounts() > 0 || dao.countTransactions() > 0
+        if (prefs.getBoolean(KEY_SEEDED_CSV, false) || hasExistingUserData) {
+            if (!prefs.getBoolean(KEY_SEEDED_CSV, false)) {
+                prefs.edit().putBoolean(KEY_SEEDED_CSV, true).apply()
+            }
             ensureDefaultCategories(dao)
             ensureRecurringSalary(prefs, dao)
             return

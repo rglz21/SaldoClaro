@@ -14,12 +14,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AccountBalanceWallet
-import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -39,16 +38,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
+import com.example.ui.components.AccountPickerField
 import com.example.ui.components.FinanceComboBox
 import com.example.ui.components.GestureSafeModalBottomSheet
 import com.example.ui.components.accountTypeIcon
-import com.example.util.FinanceFormatters
-
-private data class DisbursementOption(
-    val account: AccountEntity?,
-    val label: String,
-    val subtitle: String? = null,
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -158,19 +151,47 @@ fun AddAccountSheet(
                 style = MaterialTheme.typography.headlineSmall,
             )
 
-            if (editingAccount == null) {
-                FinanceComboBox(
-                    label = "Tipo de producto",
-                    options = AccountType.entries,
-                    selectedOption = selectedType,
-                    optionLabel = { it.labelEs },
-                    optionLeadingIcon = { accountTypeIcon(it) },
-                    onOptionSelected = {
-                        selectedType = it
-                        errorMessage = null
-                    },
-                    testTag = "account_type_combobox",
-                )
+            FinanceComboBox(
+                label = "Tipo de cuenta o producto",
+                options = AccountType.entries,
+                selectedOption = selectedType,
+                optionLabel = { it.labelEs },
+                optionLeadingIcon = { accountTypeIcon(it) },
+                onOptionSelected = {
+                    selectedType = it
+                    errorMessage = null
+                },
+                testTag = "account_type_combobox",
+            )
+
+            if (editingAccount != null && selectedType != editingAccount.accountType) {
+                val bothLiquid = editingAccount.accountType.isLiquidAsset && selectedType.isLiquidAsset
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = if (bothLiquid) {
+                                "Se cambiará de ${editingAccount.accountType.labelEs} a ${selectedType.labelEs} conservando tu saldo y movimientos."
+                            } else {
+                                "Se cambiará de ${editingAccount.accountType.labelEs} a ${selectedType.labelEs}. Revisa el saldo y los datos propios de este tipo antes de actualizar."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
             }
 
             OutlinedTextField(
@@ -478,7 +499,11 @@ fun AddAccountSheet(
                                 savingsGoal = goal,
                                 counterpartyName = counterpartyName.trim(),
                                 linkedAccountId = resolvedLinkedId,
-                                colorIndex = editingAccount?.colorIndex ?: selectedType.ordinal,
+                                colorIndex = if (editingAccount == null || editingAccount.accountType != selectedType) {
+                                    selectedType.ordinal
+                                } else {
+                                    editingAccount.colorIndex
+                                },
                                 createdAt = editingAccount?.createdAt ?: System.currentTimeMillis(),
                             ),
                             shouldDisburse,
@@ -523,28 +548,14 @@ private fun LoanDisbursementSection(
                 )
             }
         } else {
-            val options = remember(candidates) {
-                listOf(DisbursementOption(null, "Sin asociar", "Solo llevar control del préstamo")) +
-                    candidates.map { acc ->
-                        DisbursementOption(
-                            account = acc,
-                            label = acc.name,
-                            subtitle = "${acc.accountType.shortLabelEs} · Saldo ${FinanceFormatters.currency(acc.balance)}",
-                        )
-                    }
-            }
-            val selectedOption = options.firstOrNull { it.account?.id == selectedAccountId } ?: options.first()
-
-            FinanceComboBox(
+            AccountPickerField(
                 label = if (isLent) "Cuenta de donde sale el desembolso" else "Cuenta donde se realiza el desembolso",
-                options = options,
-                selectedOption = selectedOption,
-                optionLabel = { it.label },
-                optionSubtitle = { it.subtitle },
-                optionLeadingIcon = { opt ->
-                    opt.account?.let { accountTypeIcon(it.accountType) } ?: Icons.Rounded.Block
-                },
-                onOptionSelected = { onSelectAccount(it.account?.id) },
+                accounts = candidates,
+                selectedAccount = candidates.firstOrNull { it.id == selectedAccountId },
+                allowNone = true,
+                noneLabel = "Sin asociar",
+                noneSubtitle = "Solo llevar control del préstamo",
+                onAccountSelected = { onSelectAccount(it?.id) },
                 testTag = "loan_disbursement_combobox",
             )
 

@@ -61,8 +61,8 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.AccountEntity
 import com.example.data.model.AccountType
 import com.example.data.model.InstallmentPlanEntity
+import com.example.ui.components.AccountPickerField
 import com.example.ui.components.EmptyFinanceCard
-import com.example.ui.components.FinanceComboBox
 import com.example.ui.components.PillBadge
 import com.example.ui.components.SectionHeader
 import com.example.ui.components.accountTypeIcon
@@ -146,14 +146,16 @@ fun AccountsScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     } else {
-                        FinanceComboBox(
+                        AccountPickerField(
                             label = "Cuenta de pago",
-                            options = payers,
-                            selectedOption = payers.firstOrNull { it.id == chosenPayerId },
-                            optionLabel = { it.name },
-                            optionSubtitle = { "${it.accountType.shortLabelEs} · ${FinanceFormatters.currency(it.balance, state.hideBalances)}" },
-                            optionLeadingIcon = { accountTypeIcon(it.accountType) },
-                            onOptionSelected = { chosenPayerId = it.id },
+                            accounts = payers,
+                            selectedAccount = payers.firstOrNull { it.id == chosenPayerId },
+                            hideBalances = state.hideBalances,
+                            onAccountSelected = { acc -> if (acc != null) chosenPayerId = acc.id },
+                            onAddAccount = { type ->
+                                installmentPendingPay = null
+                                onAddAccount(type)
+                            },
                             testTag = "msi_pay_account_combobox",
                         )
                     }

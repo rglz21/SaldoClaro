@@ -674,19 +674,6 @@ fun SaldoClaroApp(
     }
 
     // Create / Edit Modal Bottom Sheets
-    accountSheet?.let { req ->
-        AddAccountSheet(
-            existingAccounts = state.accounts,
-            editingAccount = req.editing,
-            initialType = req.initialType,
-            onDismiss = { accountSheet = null },
-            onSave = { account, applyDisbursement ->
-                viewModel.saveAccount(account, applyDisbursement)
-                accountSheet = null
-            },
-        )
-    }
-
     movementSheet?.let { req ->
         AddTransactionSheet(
             accounts = state.accounts,
@@ -695,11 +682,10 @@ fun SaldoClaroApp(
             preselectedAccountId = req.sourceAccountId,
             preselectedDestinationId = req.destinationAccountId,
             initialDateMillis = req.initialDateMillis,
+            hideBalances = state.hideBalances,
             onDismiss = { movementSheet = null },
-            onCreateAccountFirst = {
-                accountSheet = AccountSheetRequest(
-                    initialType = if (req.mode == MovementSheetMode.MSI) AccountType.CREDIT else AccountType.DEBIT
-                )
+            onCreateAccountFirst = { suggestedType ->
+                accountSheet = AccountSheetRequest(initialType = suggestedType)
             },
             onRecordIncomeOrExpense = { title, amount, type, categoryName, accountId, dateMillis, note ->
                 viewModel.recordIncomeOrExpense(title, amount, type, categoryName, accountId, dateMillis, note)
@@ -723,11 +709,27 @@ fun SaldoClaroApp(
             editingPayment = req.editing,
             initialKind = req.initialKind,
             initialDateMillis = req.initialDateMillis,
+            hideBalances = state.hideBalances,
             onDismiss = { scheduledSheet = null },
-            onCreateAccountFirst = { accountSheet = AccountSheetRequest(initialType = AccountType.DEBIT) },
+            onCreateAccountFirst = { suggestedType ->
+                accountSheet = AccountSheetRequest(initialType = suggestedType)
+            },
             onSave = { payment ->
                 viewModel.saveScheduledPayment(payment)
                 scheduledSheet = null
+            },
+        )
+    }
+
+    accountSheet?.let { req ->
+        AddAccountSheet(
+            existingAccounts = state.accounts,
+            editingAccount = req.editing,
+            initialType = req.initialType,
+            onDismiss = { accountSheet = null },
+            onSave = { account, applyDisbursement ->
+                viewModel.saveAccount(account, applyDisbursement)
+                accountSheet = null
             },
         )
     }

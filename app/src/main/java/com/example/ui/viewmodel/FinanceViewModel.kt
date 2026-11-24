@@ -217,7 +217,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 }
             }.onSuccess {
                 val msg = when {
-                    account.id != 0L -> "Cuenta \"${account.name}\" actualizada"
+                    account.id != 0L -> "Cuenta \"${account.name}\" actualizada (${account.accountType.labelEs})"
                     applyDisbursementNow && account.linkedAccountId != null &&
                         account.accountType == AccountType.BANK_LOAN ->
                         "Préstamo guardado y desembolso depositado en tu cuenta"
