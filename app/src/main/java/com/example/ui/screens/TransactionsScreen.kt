@@ -24,13 +24,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FormatListBulleted
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -43,6 +48,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,7 +78,9 @@ import com.example.ui.sheets.MovementSheetMode
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.viewmodel.FinanceUiState
+import com.example.util.DateMath
 import com.example.util.FinanceFormatters
+import java.util.Calendar
 import java.util.Locale
 
 enum class TransactionsViewMode(val labelEs: String) {
@@ -85,6 +93,14 @@ private enum class TxTypeFilter(val labelEs: String) {
     EXPENSE("Gastos"),
     INCOME("Ingresos"),
     TRANSFER("Transferencias"),
+}
+
+private enum class TxDateFilter(val labelEs: String) {
+    ALL("Todas las fechas"),
+    TODAY("Hoy"),
+    WEEK("Semana"),
+    MONTH("Mes"),
+    CUSTOM("Rango"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -115,6 +131,15 @@ fun TransactionsScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var typeFilter by remember { mutableStateOf(TxTypeFilter.ALL) }
+    var dateFilter by remember { mutableStateOf(TxDateFilter.ALL) }
+    val initialCal = remember { Calendar.getInstance() }
+    val currentYear = initialCal.get(Calendar.YEAR)
+    val currentMonth = initialCal.get(Calendar.MONTH)
+    var filterYear by remember { mutableStateOf(currentYear) }
+    var filterMonth by remember { mutableStateOf(currentMonth) }
+    var customStartMillis by remember { mutableStateOf<Long?>(null) }
+    var customEndMillis by remember { mutableStateOf<Long?>(null) }
+    var showDateRangeDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<TransactionEntity?>(null) }
 
     val accountMap = remember(state.accounts) { state.accounts.associateBy { it.id } }
@@ -122,7 +147,59 @@ fun TransactionsScreen(
         state.categories.associateBy { it.name.lowercase(Locale.ROOT) }
     }
 
-    val filtered = remember(state.transactions, searchQuery, typeFilter) {
+    val (dateRangeStart, dateRangeEnd) = remember(
+        dateFilter,
+        filterYear,
+        filterMonth,
+        customStartMillis,
+        customEndMillis,
+    ) {
+        val now = System.currentTimeMillis()
+        when (dateFilter) {
+            TxDateFilter.ALL -> null to null
+            TxDateFilter.TODAY -> DateMath.startOfDay(now) to DateMath.endOfDayExclusive(now)
+            TxDateFilter.WEEK -> DateMath.startOfWeekWithOffset(0) to DateMath.endOfWeekExclusive(0)
+            TxDateFilter.MONTH -> DateMath.startOfMonth(filterYear, filterMonth) to DateMath.endOfMonthExclusive(filterYear, filterMonth)
+            TxDateFilter.CUSTOM -> {
+                val start = customStartMillis
+                val end = customEndMillis
+                if (start != null && end != null) {
+                    val orderedStart = minOf(start, end)
+                    val orderedEnd = maxOf(start, end)
+                    DateMath.startOfDay(orderedStart) to DateMath.endOfDayExclusive(orderedEnd)
+                } else {
+                    null to null
+                }
+            }
+        }
+    }
+
+    val activeDateLabel = remember(
+        dateFilter,
+        filterYear,
+        filterMonth,
+        customStartMillis,
+        customEndMillis,
+    ) {
+        when (dateFilter) {
+            TxDateFilter.ALL -> null
+            TxDateFilter.TODAY -> "Hoy"
+            TxDateFilter.WEEK -> "Esta semana"
+            TxDateFilter.MONTH -> FinanceFormatters.monthYear(filterYear, filterMonth)
+            TxDateFilter.CUSTOM -> {
+                val start = customStartMillis
+                val end = customEndMillis
+                if (start != null && end != null) {
+                    val s = minOf(start, end)
+                    val e = maxOf(start, end)
+                    if (DateMath.startOfDay(s) == DateMath.startOfDay(e)) FinanceFormatters.fullDate(s)
+                    else "${FinanceFormatters.shortDate(s)} – ${FinanceFormatters.fullDate(e)}"
+                } else null
+            }
+        }
+    }
+
+    val filtered = remember(state.transactions, searchQuery, typeFilter, dateRangeStart, dateRangeEnd) {
         val q = searchQuery.trim().lowercase()
         state.transactions.filter { tx ->
             val matchesType = when (typeFilter) {
@@ -131,17 +208,77 @@ fun TransactionsScreen(
                 TxTypeFilter.INCOME -> tx.transactionType == TransactionType.INCOME
                 TxTypeFilter.TRANSFER -> tx.transactionType == TransactionType.TRANSFER
             }
+            val matchesDate = (dateRangeStart == null || tx.dateMillis >= dateRangeStart) &&
+                (dateRangeEnd == null || tx.dateMillis < dateRangeEnd)
             val matchesSearch = q.isEmpty() ||
                 tx.title.lowercase().contains(q) ||
                 tx.note.lowercase().contains(q) ||
                 tx.categoryLabel.lowercase().contains(q) ||
                 (accountMap[tx.accountId]?.name?.lowercase()?.contains(q) == true)
-            matchesType && matchesSearch
+            matchesType && matchesDate && matchesSearch
         }
     }
 
     val filteredIncome = filtered.filter { it.transactionType == TransactionType.INCOME }.sumOf { it.amount }
     val filteredExpense = filtered.filter { it.transactionType == TransactionType.EXPENSE }.sumOf { it.amount }
+
+    if (showDateRangeDialog) {
+        val rangeState = rememberDateRangePickerState(
+            initialSelectedStartDateMillis = customStartMillis?.plus(43_200_000L),
+            initialSelectedEndDateMillis = customEndMillis?.plus(43_200_000L),
+        )
+        DatePickerDialog(
+            onDismissRequest = {
+                showDateRangeDialog = false
+                if (dateFilter == TxDateFilter.CUSTOM && (customStartMillis == null || customEndMillis == null)) {
+                    dateFilter = TxDateFilter.ALL
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = rangeState.selectedStartDateMillis != null,
+                    onClick = {
+                        val startUtc = rangeState.selectedStartDateMillis ?: return@TextButton
+                        val endUtc = rangeState.selectedEndDateMillis ?: startUtc
+                        customStartMillis = DateMath.startOfDay(startUtc + 43_200_000L)
+                        customEndMillis = DateMath.startOfDay(endUtc + 43_200_000L)
+                        dateFilter = TxDateFilter.CUSTOM
+                        showDateRangeDialog = false
+                    },
+                    modifier = Modifier.testTag("tx_range_confirm"),
+                ) {
+                    Text("Aplicar")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDateRangeDialog = false
+                        if (dateFilter == TxDateFilter.CUSTOM && (customStartMillis == null || customEndMillis == null)) {
+                            dateFilter = TxDateFilter.ALL
+                        }
+                    },
+                ) {
+                    Text("Cancelar")
+                }
+            },
+        ) {
+            DateRangePicker(
+                state = rangeState,
+                title = {
+                    Text(
+                        text = "Filtrar movimientos por fecha",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(start = 24.dp, top = 16.dp, end = 24.dp),
+                    )
+                },
+                showModeToggle = false,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(460.dp),
+            )
+        }
+    }
 
     if (pendingDelete != null) {
         val tx = pendingDelete!!
@@ -236,13 +373,201 @@ fun TransactionsScreen(
                 }
 
                 item {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(TxTypeFilter.entries) { item ->
-                            FilterChip(
-                                selected = typeFilter == item,
-                                onClick = { typeFilter = item },
-                                label = { Text(item.labelEs) },
-                            )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(TxTypeFilter.entries) { item ->
+                                FilterChip(
+                                    selected = typeFilter == item,
+                                    onClick = { typeFilter = item },
+                                    label = { Text(item.labelEs) },
+                                )
+                            }
+                        }
+
+                        // Date Filter Chips
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(TxDateFilter.entries) { item ->
+                                FilterChip(
+                                    selected = dateFilter == item,
+                                    onClick = {
+                                        if (item == TxDateFilter.CUSTOM) {
+                                            showDateRangeDialog = true
+                                        } else {
+                                            dateFilter = item
+                                        }
+                                    },
+                                    leadingIcon = when (item) {
+                                        TxDateFilter.MONTH -> ({
+                                            Icon(
+                                                imageVector = Icons.Rounded.CalendarMonth,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        })
+                                        TxDateFilter.CUSTOM -> ({
+                                            Icon(
+                                                imageVector = Icons.Rounded.DateRange,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        })
+                                        else -> null
+                                    },
+                                    label = { Text(item.labelEs) },
+                                    modifier = Modifier.testTag("tx_date_filter_${item.name.lowercase()}"),
+                                )
+                            }
+                        }
+
+                        if (dateFilter == TxDateFilter.MONTH) {
+                            val isCurrentMonth = filterYear == currentYear && filterMonth == currentMonth
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface,
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("tx_month_navigator"),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    IconButton(
+                                        onClick = {
+                                            val c = Calendar.getInstance().apply {
+                                                set(Calendar.YEAR, filterYear)
+                                                set(Calendar.MONTH, filterMonth)
+                                                set(Calendar.DAY_OF_MONTH, 1)
+                                                add(Calendar.MONTH, -1)
+                                            }
+                                            filterYear = c.get(Calendar.YEAR)
+                                            filterMonth = c.get(Calendar.MONTH)
+                                        },
+                                        modifier = Modifier.testTag("tx_month_prev"),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                                            contentDescription = "Mes anterior",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Text(
+                                            text = FinanceFormatters.monthYear(filterYear, filterMonth),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                        if (!isCurrentMonth) {
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                shape = RoundedCornerShape(999.dp),
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(999.dp))
+                                                    .clickable {
+                                                        filterYear = currentYear
+                                                        filterMonth = currentMonth
+                                                    }
+                                                    .testTag("tx_month_reset"),
+                                            ) {
+                                                Text(
+                                                    text = "Actual",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            val c = Calendar.getInstance().apply {
+                                                set(Calendar.YEAR, filterYear)
+                                                set(Calendar.MONTH, filterMonth)
+                                                set(Calendar.DAY_OF_MONTH, 1)
+                                                add(Calendar.MONTH, 1)
+                                            }
+                                            filterYear = c.get(Calendar.YEAR)
+                                            filterMonth = c.get(Calendar.MONTH)
+                                        },
+                                        modifier = Modifier.testTag("tx_month_next"),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                            contentDescription = "Mes siguiente",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (dateFilter == TxDateFilter.CUSTOM && activeDateLabel != null) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface,
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable { showDateRangeDialog = true }
+                                    .testTag("tx_custom_range_banner"),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 14.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.DateRange,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = activeDateLabel,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        TextButton(
+                                            onClick = { showDateRangeDialog = true },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        ) {
+                                            Text("Cambiar", style = MaterialTheme.typography.labelMedium)
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                dateFilter = TxDateFilter.ALL
+                                                customStartMillis = null
+                                                customEndMillis = null
+                                            },
+                                            modifier = Modifier.size(36.dp),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Close,
+                                                contentDescription = "Quitar rango de fechas",
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -255,35 +580,57 @@ fun TransactionsScreen(
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
                                     Text(
-                                        text = "Ingresos mostrados",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        text = if (activeDateLabel != null) activeDateLabel else "Todos los periodos",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary,
                                     )
                                     Text(
-                                        text = FinanceFormatters.currency(filteredIncome, state.hideBalances),
-                                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMono),
-                                        fontWeight = FontWeight.Bold,
-                                        color = financeColors.income,
+                                        text = "${filtered.size} movimientos",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = "Gastos mostrados",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        text = FinanceFormatters.currency(filteredExpense, state.hideBalances),
-                                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMono),
-                                        fontWeight = FontWeight.Bold,
-                                        color = financeColors.expense,
-                                    )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "Ingresos mostrados",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Text(
+                                            text = FinanceFormatters.currency(filteredIncome, state.hideBalances),
+                                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMono),
+                                            fontWeight = FontWeight.Bold,
+                                            color = financeColors.income,
+                                        )
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = "Gastos mostrados",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Text(
+                                            text = FinanceFormatters.currency(filteredExpense, state.hideBalances),
+                                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMono),
+                                            fontWeight = FontWeight.Bold,
+                                            color = financeColors.expense,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -291,6 +638,9 @@ fun TransactionsScreen(
                 }
 
                 if (filtered.isEmpty()) {
+                    val hasActiveFilters = dateFilter != TxDateFilter.ALL ||
+                        typeFilter != TxTypeFilter.ALL ||
+                        searchQuery.isNotBlank()
                     item {
                         EmptyFinanceCard(
                             icon = Icons.Rounded.ReceiptLong,
@@ -298,12 +648,26 @@ fun TransactionsScreen(
                             subtitle = if (state.transactions.isEmpty()) {
                                 "Aquí verás todas tus entradas, salidas, transferencias y compras a MSI."
                             } else {
-                                "Prueba cambiando el filtro o los términos de búsqueda."
+                                "No hay movimientos que coincidan con el filtro de fecha o búsqueda actual."
                             },
-                            actionLabel = if (state.transactions.isEmpty()) "Registrar movimiento" else null,
-                            onActionClick = if (state.transactions.isEmpty()) {
-                                { onOpenAddMovement(MovementSheetMode.EXPENSE, null) }
-                            } else null,
+                            actionLabel = when {
+                                state.transactions.isEmpty() -> "Registrar movimiento"
+                                hasActiveFilters -> "Limpiar filtros"
+                                else -> null
+                            },
+                            onActionClick = when {
+                                state.transactions.isEmpty() -> {
+                                    { onOpenAddMovement(MovementSheetMode.EXPENSE, null) }
+                                }
+                                hasActiveFilters -> {
+                                    {
+                                        dateFilter = TxDateFilter.ALL
+                                        typeFilter = TxTypeFilter.ALL
+                                        searchQuery = ""
+                                    }
+                                }
+                                else -> null
+                            },
                         )
                     }
                 } else {

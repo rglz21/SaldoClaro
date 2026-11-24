@@ -561,7 +561,7 @@ private fun CreditCardDetailCard(
     val utilizationColor = when {
         summary.utilizationRatio >= 0.70 -> financeColors.expense
         summary.utilizationRatio >= 0.35 -> financeColors.warning
-        else -> Color(0xFF7CF0BE)
+        else -> financeColors.goldAccent
     }
 
     Card(
@@ -647,7 +647,7 @@ private fun CreditCardDetailCard(
                                 text = FinanceFormatters.currency(summary.availableCredit, hideBalances),
                                 style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMono),
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF7CF0BE),
+                                color = financeColors.goldAccent,
                             )
                         }
                     }

@@ -61,6 +61,20 @@ object FinanceFormatters {
         return fmt.format(Date(millis)).replaceFirstChar { it.uppercase(esLocale) }
     }
 
+    fun monthYear(year: Int, monthZeroBased: Int): String {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, monthZeroBased)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+        return monthYear(cal.timeInMillis)
+    }
+
+    fun shortMonth(monthZeroBased: Int): String {
+        val months = listOf("Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic")
+        return months[monthZeroBased.coerceIn(0, 11)]
+    }
+
     fun buildCsvReport(
         accounts: List<AccountEntity>,
         transactions: List<TransactionEntity>,
@@ -100,7 +114,16 @@ object DateMath {
         }.timeInMillis
     }
 
-    fun startOfCurrentWeek(): Long {
+    fun endOfDayExclusive(millis: Long = System.currentTimeMillis()): Long {
+        return Calendar.getInstance().apply {
+            timeInMillis = startOfDay(millis)
+            add(Calendar.DAY_OF_YEAR, 1)
+        }.timeInMillis
+    }
+
+    fun startOfCurrentWeek(): Long = startOfWeekWithOffset(0)
+
+    fun startOfWeekWithOffset(weekOffset: Int): Long {
         return Calendar.getInstance().apply {
             firstDayOfWeek = Calendar.MONDAY
             set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
@@ -108,11 +131,26 @@ object DateMath {
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
+            if (weekOffset != 0) add(Calendar.WEEK_OF_YEAR, weekOffset)
+        }.timeInMillis
+    }
+
+    fun endOfWeekExclusive(weekStartMillis: Long): Long {
+        return Calendar.getInstance().apply {
+            timeInMillis = weekStartMillis
+            add(Calendar.DAY_OF_YEAR, 7)
         }.timeInMillis
     }
 
     fun startOfCurrentMonth(): Long {
+        val now = Calendar.getInstance()
+        return startOfMonth(now.get(Calendar.YEAR), now.get(Calendar.MONTH))
+    }
+
+    fun startOfMonth(year: Int, monthZeroBased: Int): Long {
         return Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, monthZeroBased)
             set(Calendar.DAY_OF_MONTH, 1)
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
@@ -121,8 +159,34 @@ object DateMath {
         }.timeInMillis
     }
 
-    fun startOfCurrentYear(): Long {
+    fun endOfMonthExclusive(year: Int, monthZeroBased: Int): Long {
         return Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, monthZeroBased)
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            add(Calendar.MONTH, 1)
+        }.timeInMillis
+    }
+
+    fun daysInMonth(year: Int, monthZeroBased: Int): Int {
+        return Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, monthZeroBased)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }.getActualMaximum(Calendar.DAY_OF_MONTH)
+    }
+
+    fun startOfCurrentYear(): Long {
+        return startOfYear(Calendar.getInstance().get(Calendar.YEAR))
+    }
+
+    fun startOfYear(year: Int): Long {
+        return Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
             set(Calendar.MONTH, Calendar.JANUARY)
             set(Calendar.DAY_OF_MONTH, 1)
             set(Calendar.HOUR_OF_DAY, 0)
@@ -130,6 +194,10 @@ object DateMath {
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
+    }
+
+    fun endOfYearExclusive(year: Int): Long {
+        return startOfYear(year + 1)
     }
 
     fun daysInCurrentMonth(): Int {

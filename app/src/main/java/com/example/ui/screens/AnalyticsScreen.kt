@@ -20,11 +20,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ImportExport
@@ -35,6 +37,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -51,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +86,7 @@ import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.viewmodel.BudgetProgress
 import com.example.ui.viewmodel.FinanceUiState
+import com.example.util.DateMath
 import com.example.util.FinanceFormatters
 
 enum class AnalyticsTabMode(val labelEs: String) {
@@ -101,6 +107,9 @@ fun AnalyticsScreen(
     tabMode: AnalyticsTabMode,
     onTabModeChange: (AnalyticsTabMode) -> Unit,
     onSelectPeriod: (AnalyticsPeriod) -> Unit,
+    onShiftPeriod: (Int) -> Unit,
+    onResetToCurrentPeriod: () -> Unit,
+    onSetCustomRange: (Long, Long) -> Unit,
     onSelectGranularity: (AnalyticsGranularity) -> Unit,
     onKpiClick: (AnalyticsKpiKind) -> Unit,
     onCategoryDetailClick: (String) -> Unit,
@@ -118,6 +127,7 @@ fun AnalyticsScreen(
     var categoryTab by remember { mutableStateOf(CategoryTabFilter.ALL) }
     var categoryQuery by remember { mutableStateOf("") }
     var categoryPendingDelete by remember { mutableStateOf<CategoryEntity?>(null) }
+    var showCustomRangeDialog by remember { mutableStateOf(false) }
 
     val displayedCategories = remember(state.categories, categoryTab, categoryQuery) {
         val q = categoryQuery.trim().lowercase()
@@ -152,6 +162,52 @@ fun AnalyticsScreen(
                 TextButton(onClick = { categoryPendingDelete = null }) { Text("Cancelar") }
             },
         )
+    }
+
+    if (showCustomRangeDialog) {
+        val rangeState = rememberDateRangePickerState(
+            initialSelectedStartDateMillis = analytics.periodStartMillis + 43_200_000L,
+            initialSelectedEndDateMillis = (analytics.periodEndMillis - 1L).coerceAtLeast(analytics.periodStartMillis) + 43_200_000L,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showCustomRangeDialog = false },
+            confirmButton = {
+                TextButton(
+                    enabled = rangeState.selectedStartDateMillis != null,
+                    onClick = {
+                        val startUtc = rangeState.selectedStartDateMillis ?: return@TextButton
+                        val endUtc = rangeState.selectedEndDateMillis ?: startUtc
+                        val startLocal = DateMath.startOfDay(startUtc + 43_200_000L)
+                        val endLocal = DateMath.startOfDay(endUtc + 43_200_000L)
+                        onSetCustomRange(startLocal, endLocal)
+                        showCustomRangeDialog = false
+                    },
+                    modifier = Modifier.testTag("analytics_range_confirm"),
+                ) {
+                    Text("Aplicar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomRangeDialog = false }) {
+                    Text("Cancelar")
+                }
+            },
+        ) {
+            DateRangePicker(
+                state = rangeState,
+                title = {
+                    Text(
+                        text = "Rango de fechas para análisis",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(start = 24.dp, top = 16.dp, end = 24.dp),
+                    )
+                },
+                showModeToggle = false,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(460.dp),
+            )
+        }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -226,11 +282,137 @@ fun AnalyticsScreen(
                             AnalyticsPeriod.entries.forEachIndexed { idx, period ->
                                 SegmentedButton(
                                     selected = analytics.period == period,
-                                    onClick = { onSelectPeriod(period) },
+                                    onClick = {
+                                        if (period == AnalyticsPeriod.CUSTOM) {
+                                            if (analytics.period != AnalyticsPeriod.CUSTOM) {
+                                                onSelectPeriod(period)
+                                            }
+                                            showCustomRangeDialog = true
+                                        } else {
+                                            onSelectPeriod(period)
+                                        }
+                                    },
                                     shape = SegmentedButtonDefaults.itemShape(idx, AnalyticsPeriod.entries.size),
                                     modifier = Modifier.testTag("analytics_period_${period.name.lowercase()}"),
                                 ) {
-                                    Text(period.labelEs)
+                                    Text(
+                                        text = period.labelEs,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+
+                        // Period / Month Navigator Bar
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("analytics_period_navigator")
+                                .then(
+                                    if (analytics.period == AnalyticsPeriod.CUSTOM) {
+                                        Modifier.clickable { showCustomRangeDialog = true }
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
+                        ) {
+                            if (analytics.period == AnalyticsPeriod.CUSTOM) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.DateRange,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = analytics.periodNavLabel,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = { showCustomRangeDialog = true },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.testTag("analytics_pick_range_button"),
+                                    ) {
+                                        Text("Elegir fechas", style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    IconButton(
+                                        onClick = { onShiftPeriod(-1) },
+                                        modifier = Modifier.testTag("analytics_prev_period"),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                                            contentDescription = "Periodo anterior",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Text(
+                                            text = analytics.periodNavLabel,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (!analytics.isCurrentPeriod) {
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                shape = RoundedCornerShape(999.dp),
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(999.dp))
+                                                    .clickable(onClick = onResetToCurrentPeriod)
+                                                    .testTag("analytics_reset_period"),
+                                            ) {
+                                                Text(
+                                                    text = "Actual",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { onShiftPeriod(1) },
+                                        modifier = Modifier.testTag("analytics_next_period"),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                            contentDescription = "Periodo siguiente",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -250,7 +432,10 @@ fun AnalyticsScreen(
                                     )
                                 }
                             }
-                            if (analytics.granularity != AnalyticsGranularity.DAY || analytics.period == AnalyticsPeriod.WEEK) {
+                            if (analytics.granularity != AnalyticsGranularity.DAY ||
+                                analytics.period == AnalyticsPeriod.WEEK ||
+                                analytics.period == AnalyticsPeriod.CUSTOM
+                            ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = "Ingresos",
@@ -498,8 +683,13 @@ fun AnalyticsScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                 ) {
+                                    val budgetSpentLabel = if (analytics.period == AnalyticsPeriod.MONTH) {
+                                        "Gastado (${analytics.periodNavLabel}): "
+                                    } else {
+                                        "Gastado este mes: "
+                                    }
                                     Text(
-                                        text = "Gastado este mes: ${FinanceFormatters.currency(totalBudgetSpent, state.hideBalances)}",
+                                        text = "$budgetSpentLabel${FinanceFormatters.currency(totalBudgetSpent, state.hideBalances)}",
                                         style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono),
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                     )

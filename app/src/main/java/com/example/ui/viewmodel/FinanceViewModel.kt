@@ -72,7 +72,12 @@ data class AnalyticsSummary(
     val granularity: AnalyticsGranularity,
     val availableGranularities: List<AnalyticsGranularity>,
     val periodSubtitle: String,
+    val periodNavLabel: String = "",
+    val isCurrentPeriod: Boolean = true,
     val periodStartMillis: Long = 0L,
+    val periodEndMillis: Long = Long.MAX_VALUE,
+    val selectedYear: Int = Calendar.getInstance().get(Calendar.YEAR),
+    val selectedMonth: Int = Calendar.getInstance().get(Calendar.MONTH),
     val totalExpense: Double,
     val totalIncome: Double,
     val netFlow: Double,
@@ -134,6 +139,11 @@ private data class UiPrefsState(
     val hideBalances: Boolean = false,
     val period: AnalyticsPeriod = AnalyticsPeriod.MONTH,
     val granularity: AnalyticsGranularity = AnalyticsGranularity.WEEK,
+    val anchorYear: Int = Calendar.getInstance().get(Calendar.YEAR),
+    val anchorMonth: Int = Calendar.getInstance().get(Calendar.MONTH),
+    val weekOffset: Int = 0,
+    val customStartMillis: Long? = null,
+    val customEndMillis: Long? = null,
     val snackbarMessage: String? = null,
 )
 
@@ -188,16 +198,97 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectAnalyticsPeriod(period: AnalyticsPeriod) {
+        val current = uiPrefs.value
         val defaultGranularity = when (period) {
             AnalyticsPeriod.WEEK -> AnalyticsGranularity.DAY
             AnalyticsPeriod.MONTH -> AnalyticsGranularity.WEEK
             AnalyticsPeriod.YEAR -> AnalyticsGranularity.MONTH
+            AnalyticsPeriod.CUSTOM -> AnalyticsGranularity.DAY
         }
-        uiPrefs.value = uiPrefs.value.copy(period = period, granularity = defaultGranularity)
+        val todayStart = DateMath.startOfDay()
+        val defaultStart = current.customStartMillis ?: (todayStart - 29L * 86_400_000L)
+        val defaultEnd = current.customEndMillis ?: todayStart
+        uiPrefs.value = current.copy(
+            period = period,
+            granularity = defaultGranularity,
+            customStartMillis = if (period == AnalyticsPeriod.CUSTOM) defaultStart else current.customStartMillis,
+            customEndMillis = if (period == AnalyticsPeriod.CUSTOM) defaultEnd else current.customEndMillis,
+        )
     }
 
     fun selectAnalyticsGranularity(granularity: AnalyticsGranularity) {
         uiPrefs.value = uiPrefs.value.copy(granularity = granularity)
+    }
+
+    fun shiftAnalyticsPeriod(delta: Int) {
+        val current = uiPrefs.value
+        when (current.period) {
+            AnalyticsPeriod.WEEK -> {
+                uiPrefs.value = current.copy(weekOffset = current.weekOffset + delta)
+            }
+            AnalyticsPeriod.MONTH -> {
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, current.anchorYear)
+                    set(Calendar.MONTH, current.anchorMonth)
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    add(Calendar.MONTH, delta)
+                }
+                uiPrefs.value = current.copy(
+                    anchorYear = cal.get(Calendar.YEAR),
+                    anchorMonth = cal.get(Calendar.MONTH),
+                )
+            }
+            AnalyticsPeriod.YEAR -> {
+                uiPrefs.value = current.copy(anchorYear = (current.anchorYear + delta).coerceIn(2000, 2100))
+            }
+            AnalyticsPeriod.CUSTOM -> {
+                val start = current.customStartMillis ?: (DateMath.startOfDay() - 29L * 86_400_000L)
+                val end = current.customEndMillis ?: DateMath.startOfDay()
+                val spanDays = max(1, DateMath.daysBetween(start, end) + 1)
+                val shiftMillis = delta.toLong() * spanDays.toLong() * 86_400_000L
+                uiPrefs.value = current.copy(
+                    customStartMillis = DateMath.startOfDay(start + shiftMillis),
+                    customEndMillis = DateMath.startOfDay(end + shiftMillis),
+                )
+            }
+        }
+    }
+
+    fun selectAnalyticsMonth(year: Int, monthZeroBased: Int) {
+        uiPrefs.value = uiPrefs.value.copy(
+            period = AnalyticsPeriod.MONTH,
+            anchorYear = year,
+            anchorMonth = monthZeroBased.coerceIn(0, 11),
+        )
+    }
+
+    fun resetAnalyticsToCurrent() {
+        val now = Calendar.getInstance()
+        val todayStart = DateMath.startOfDay()
+        uiPrefs.value = uiPrefs.value.copy(
+            anchorYear = now.get(Calendar.YEAR),
+            anchorMonth = now.get(Calendar.MONTH),
+            weekOffset = 0,
+            customStartMillis = todayStart - 29L * 86_400_000L,
+            customEndMillis = todayStart,
+        )
+    }
+
+    fun setAnalyticsCustomRange(startMillis: Long, endMillisInclusive: Long) {
+        val cleanStart = DateMath.startOfDay(minOf(startMillis, endMillisInclusive))
+        val cleanEnd = DateMath.startOfDay(maxOf(startMillis, endMillisInclusive))
+        val spanDays = max(1, DateMath.daysBetween(cleanStart, cleanEnd) + 1)
+        val defaultGran = when {
+            spanDays <= 16 -> AnalyticsGranularity.DAY
+            spanDays <= 65 -> AnalyticsGranularity.WEEK
+            else -> AnalyticsGranularity.MONTH
+        }
+        uiPrefs.value = uiPrefs.value.copy(
+            period = AnalyticsPeriod.CUSTOM,
+            granularity = defaultGran,
+            customStartMillis = cleanStart,
+            customEndMillis = cleanEnd,
+        )
     }
 
     // --- Account Actions ---
@@ -609,8 +700,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             transactions = transactions,
             categories = categories,
             monthExpense = monthExpense,
-            period = prefs.period,
-            requestedGranularity = prefs.granularity,
+            prefs = prefs,
             creditUtilizationRatio = creditUtilizationRatio,
             fixedMonthlyCommitment = fixedMonthlyCommitment,
         )
@@ -646,35 +736,94 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         transactions: List<TransactionEntity>,
         categories: List<CategoryEntity>,
         monthExpense: Double,
-        period: AnalyticsPeriod,
-        requestedGranularity: AnalyticsGranularity,
+        prefs: UiPrefsState,
         creditUtilizationRatio: Double,
         fixedMonthlyCommitment: Double,
     ): AnalyticsSummary {
+        val period = prefs.period
+        val now = System.currentTimeMillis()
+        val nowCal = Calendar.getInstance()
+        val currentYear = nowCal.get(Calendar.YEAR)
+        val currentMonth = nowCal.get(Calendar.MONTH)
+        val todayStart = DateMath.startOfDay(now)
+
+        val periodStart: Long
+        val periodEnd: Long
+        val periodSubtitle: String
+        val periodNavLabel: String
+        val isCurrentPeriod: Boolean
+        val budgetWindowStart: Long
+        val budgetWindowEnd: Long
+
+        when (period) {
+            AnalyticsPeriod.WEEK -> {
+                periodStart = DateMath.startOfWeekWithOffset(prefs.weekOffset)
+                periodEnd = DateMath.endOfWeekExclusive(periodStart)
+                val weekLastDay = periodEnd - 86_400_000L
+                isCurrentPeriod = prefs.weekOffset == 0
+                periodNavLabel = "${FinanceFormatters.shortDate(periodStart)} – ${FinanceFormatters.shortDate(weekLastDay)}"
+                periodSubtitle = if (isCurrentPeriod) {
+                    "Semana actual ($periodNavLabel)"
+                } else {
+                    "Semana del $periodNavLabel"
+                }
+                budgetWindowStart = DateMath.startOfCurrentMonth()
+                budgetWindowEnd = DateMath.endOfMonthExclusive(currentYear, currentMonth)
+            }
+
+            AnalyticsPeriod.MONTH -> {
+                periodStart = DateMath.startOfMonth(prefs.anchorYear, prefs.anchorMonth)
+                periodEnd = DateMath.endOfMonthExclusive(prefs.anchorYear, prefs.anchorMonth)
+                isCurrentPeriod = prefs.anchorYear == currentYear && prefs.anchorMonth == currentMonth
+                val label = FinanceFormatters.monthYear(prefs.anchorYear, prefs.anchorMonth)
+                periodNavLabel = label
+                periodSubtitle = label
+                budgetWindowStart = periodStart
+                budgetWindowEnd = periodEnd
+            }
+
+            AnalyticsPeriod.YEAR -> {
+                periodStart = DateMath.startOfYear(prefs.anchorYear)
+                periodEnd = DateMath.endOfYearExclusive(prefs.anchorYear)
+                isCurrentPeriod = prefs.anchorYear == currentYear
+                periodNavLabel = "Año ${prefs.anchorYear}"
+                periodSubtitle = periodNavLabel
+                budgetWindowStart = DateMath.startOfCurrentMonth()
+                budgetWindowEnd = DateMath.endOfMonthExclusive(currentYear, currentMonth)
+            }
+
+            AnalyticsPeriod.CUSTOM -> {
+                val rawStart = prefs.customStartMillis ?: (todayStart - 29L * 86_400_000L)
+                val rawEnd = prefs.customEndMillis ?: todayStart
+                periodStart = DateMath.startOfDay(minOf(rawStart, rawEnd))
+                val inclusiveEnd = DateMath.startOfDay(maxOf(rawStart, rawEnd))
+                periodEnd = DateMath.endOfDayExclusive(inclusiveEnd)
+                isCurrentPeriod = false
+                periodNavLabel = "${FinanceFormatters.shortDate(periodStart)} – ${FinanceFormatters.fullDate(inclusiveEnd)}"
+                periodSubtitle = "Rango: $periodNavLabel"
+                budgetWindowStart = DateMath.startOfCurrentMonth()
+                budgetWindowEnd = DateMath.endOfMonthExclusive(currentYear, currentMonth)
+            }
+        }
+
+        val totalSpanDays = max(1, DateMath.daysBetween(periodStart, periodEnd - 1L) + 1)
         val availableGranularities = when (period) {
             AnalyticsPeriod.WEEK -> listOf(AnalyticsGranularity.DAY)
             AnalyticsPeriod.MONTH -> listOf(AnalyticsGranularity.DAY, AnalyticsGranularity.WEEK)
             AnalyticsPeriod.YEAR -> listOf(AnalyticsGranularity.MONTH, AnalyticsGranularity.WEEK)
+            AnalyticsPeriod.CUSTOM -> when {
+                totalSpanDays <= 16 -> listOf(AnalyticsGranularity.DAY)
+                totalSpanDays <= 65 -> listOf(AnalyticsGranularity.DAY, AnalyticsGranularity.WEEK)
+                else -> listOf(AnalyticsGranularity.WEEK, AnalyticsGranularity.MONTH)
+            }
         }
-        val granularity = if (requestedGranularity in availableGranularities) {
-            requestedGranularity
+        val granularity = if (prefs.granularity in availableGranularities) {
+            prefs.granularity
         } else {
             availableGranularities.first()
         }
 
-        val now = System.currentTimeMillis()
-        val periodStart = when (period) {
-            AnalyticsPeriod.WEEK -> DateMath.startOfCurrentWeek()
-            AnalyticsPeriod.MONTH -> DateMath.startOfCurrentMonth()
-            AnalyticsPeriod.YEAR -> DateMath.startOfCurrentYear()
-        }
-        val periodSubtitle = when (period) {
-            AnalyticsPeriod.WEEK -> "Semana actual (${FinanceFormatters.shortDate(periodStart)} – Hoy)"
-            AnalyticsPeriod.MONTH -> FinanceFormatters.monthYear(now)
-            AnalyticsPeriod.YEAR -> "Año ${Calendar.getInstance().get(Calendar.YEAR)}"
-        }
-
-        val periodTxs = transactions.filter { it.dateMillis >= periodStart }
+        val periodTxs = transactions.filter { it.dateMillis in periodStart until periodEnd }
         val periodExpenseTxs = periodTxs.filter { it.transactionType == TransactionType.EXPENSE }
         val periodIncomeTxs = periodTxs.filter { it.transactionType == TransactionType.INCOME }
 
@@ -683,14 +832,27 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val netFlow = totalIncome - totalExpense
         val savingsRate = if (totalIncome > 0.0) (netFlow / totalIncome).coerceIn(-1.0, 1.0) else 0.0
 
-        val elapsedDays = max(1, DateMath.daysBetween(periodStart, now) + 1)
+        val effectiveEndForAverage = if (now in periodStart until periodEnd) now else (periodEnd - 1L)
+        val elapsedDays = max(1, DateMath.daysBetween(periodStart, effectiveEndForAverage) + 1)
         val averageDailyExpense = totalExpense / elapsedDays.toDouble()
 
-        val daysPassedInMonth = max(1, DateMath.currentDayOfMonth())
-        val daysInMonth = DateMath.daysInCurrentMonth()
-        val projectedMonthExpense = (monthExpense / daysPassedInMonth.toDouble()) * daysInMonth.toDouble()
+        val projectedMonthExpense = if (period == AnalyticsPeriod.MONTH && !isCurrentPeriod) {
+            totalExpense
+        } else {
+            val daysPassedInMonth = max(1, DateMath.currentDayOfMonth())
+            val daysInMonth = DateMath.daysInCurrentMonth()
+            (monthExpense / daysPassedInMonth.toDouble()) * daysInMonth.toDouble()
+        }
 
-        val barPoints = buildBarPoints(period, granularity, periodTxs)
+        val barPoints = buildBarPoints(
+            period = period,
+            granularity = granularity,
+            periodStart = periodStart,
+            periodEnd = periodEnd,
+            anchorYear = prefs.anchorYear,
+            anchorMonth = prefs.anchorMonth,
+            periodTxs = periodTxs,
+        )
 
         val categoryMetaByLower = categories.associateBy { it.name.lowercase(Locale.ROOT) }
         val categoryBreakdown = periodExpenseTxs
@@ -707,9 +869,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             }
             .sortedByDescending { it.amount }
 
-        val monthStart = DateMath.startOfCurrentMonth()
         val monthExpenseByLowerCat = transactions
-            .filter { it.dateMillis >= monthStart && it.transactionType == TransactionType.EXPENSE }
+            .filter { it.dateMillis in budgetWindowStart until budgetWindowEnd && it.transactionType == TransactionType.EXPENSE }
             .groupBy { it.categoryLabel.lowercase(Locale.ROOT) }
             .mapValues { entry -> entry.value.sumOf { it.amount } }
 
@@ -727,7 +888,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             granularity = granularity,
             availableGranularities = availableGranularities,
             periodSubtitle = periodSubtitle,
+            periodNavLabel = periodNavLabel,
+            isCurrentPeriod = isCurrentPeriod,
             periodStartMillis = periodStart,
+            periodEndMillis = periodEnd,
+            selectedYear = prefs.anchorYear,
+            selectedMonth = prefs.anchorMonth,
             totalExpense = totalExpense,
             totalIncome = totalIncome,
             netFlow = netFlow,
@@ -746,6 +912,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private fun buildBarPoints(
         period: AnalyticsPeriod,
         granularity: AnalyticsGranularity,
+        periodStart: Long,
+        periodEnd: Long,
+        anchorYear: Int,
+        anchorMonth: Int,
         periodTxs: List<TransactionEntity>,
     ): List<ChartBarPoint> {
         val cal = Calendar.getInstance()
@@ -773,9 +943,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
                 dayLabels.indices.map { i ->
+                    val dayDate = periodStart + i * 86_400_000L
                     ChartBarPoint(
                         label = dayLabels[i],
-                        fullLabel = fullLabels[i],
+                        fullLabel = "${fullLabels[i]} (${FinanceFormatters.shortDate(dayDate)})",
                         expense = expenseBuckets[i],
                         income = incomeBuckets[i],
                     )
@@ -785,6 +956,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             period == AnalyticsPeriod.MONTH && granularity == AnalyticsGranularity.WEEK -> {
                 val expenseBuckets = DoubleArray(5)
                 val incomeBuckets = DoubleArray(5)
+                val daysCount = DateMath.daysInMonth(anchorYear, anchorMonth)
                 periodTxs.forEach { tx ->
                     cal.timeInMillis = tx.dateMillis
                     val day = cal.get(Calendar.DAY_OF_MONTH)
@@ -795,8 +967,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                         TransactionType.TRANSFER -> Unit
                     }
                 }
-                val ranges = listOf("Días 1–7", "Días 8–14", "Días 15–21", "Días 22–28", "Días 29–31")
-                (0..4).map { i ->
+                val ranges = listOf("Días 1–7", "Días 8–14", "Días 15–21", "Días 22–28", "Días 29–$daysCount")
+                val bucketCount = if (daysCount > 28) 5 else 4
+                (0 until bucketCount).map { i ->
                     ChartBarPoint(
                         label = "S${i + 1}",
                         fullLabel = "Semana ${i + 1} (${ranges[i]})",
@@ -807,7 +980,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             }
 
             period == AnalyticsPeriod.MONTH && granularity == AnalyticsGranularity.DAY -> {
-                val daysCount = DateMath.daysInCurrentMonth()
+                val daysCount = DateMath.daysInMonth(anchorYear, anchorMonth)
                 val expenseBuckets = DoubleArray(daysCount)
                 val incomeBuckets = DoubleArray(daysCount)
                 periodTxs.forEach { tx ->
@@ -819,11 +992,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                         TransactionType.TRANSFER -> Unit
                     }
                 }
+                val monthName = FinanceFormatters.shortMonth(anchorMonth)
                 (0 until daysCount).map { i ->
                     val dayNum = i + 1
                     ChartBarPoint(
                         label = if (dayNum == 1 || dayNum % 5 == 0 || dayNum == daysCount) "$dayNum" else "",
-                        fullLabel = "Día $dayNum del mes",
+                        fullLabel = "$dayNum $monthName $anchorYear",
                         expense = expenseBuckets[i],
                         income = incomeBuckets[i],
                     )
@@ -831,10 +1005,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             }
 
             period == AnalyticsPeriod.YEAR && granularity == AnalyticsGranularity.WEEK -> {
-                val nowCal = Calendar.getInstance()
-                val currentWeek = nowCal.get(Calendar.WEEK_OF_YEAR)
-                val startWeek = max(1, currentWeek - 11)
-                val weekCount = (currentWeek - startWeek + 1).coerceAtLeast(1)
+                val isCurrentYear = anchorYear == Calendar.getInstance().get(Calendar.YEAR)
+                val endWeek = if (isCurrentYear) Calendar.getInstance().get(Calendar.WEEK_OF_YEAR) else 52
+                val startWeek = max(1, endWeek - 11)
+                val weekCount = (endWeek - startWeek + 1).coerceAtLeast(1)
                 val expenseBuckets = DoubleArray(weekCount)
                 val incomeBuckets = DoubleArray(weekCount)
                 periodTxs.forEach { tx ->
@@ -853,11 +1027,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     val wkNum = startWeek + i
                     ChartBarPoint(
                         label = "S$wkNum",
-                        fullLabel = "Semana $wkNum del año",
+                        fullLabel = "Semana $wkNum ($anchorYear)",
                         expense = expenseBuckets[i],
                         income = incomeBuckets[i],
                     )
                 }
+            }
+
+            period == AnalyticsPeriod.CUSTOM -> {
+                buildCustomRangeBarPoints(periodStart, periodEnd, granularity, periodTxs)
             }
 
             else -> {
@@ -880,9 +1058,114 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 shortMonths.indices.map { i ->
                     ChartBarPoint(
                         label = shortMonths[i],
-                        fullLabel = fullMonths[i],
+                        fullLabel = "${fullMonths[i]} $anchorYear",
                         expense = expenseBuckets[i],
                         income = incomeBuckets[i],
+                    )
+                }
+            }
+        }
+    }
+
+    private fun buildCustomRangeBarPoints(
+        periodStart: Long,
+        periodEnd: Long,
+        granularity: AnalyticsGranularity,
+        periodTxs: List<TransactionEntity>,
+    ): List<ChartBarPoint> {
+        val inclusiveEnd = (periodEnd - 1L).coerceAtLeast(periodStart)
+        val totalDays = max(1, DateMath.daysBetween(periodStart, inclusiveEnd) + 1)
+        return when (granularity) {
+            AnalyticsGranularity.DAY -> {
+                val count = totalDays.coerceAtMost(65)
+                val exp = DoubleArray(count)
+                val inc = DoubleArray(count)
+                periodTxs.forEach { tx ->
+                    val idx = DateMath.daysBetween(periodStart, tx.dateMillis).coerceIn(0, count - 1)
+                    when (tx.transactionType) {
+                        TransactionType.EXPENSE -> exp[idx] += tx.amount
+                        TransactionType.INCOME -> inc[idx] += tx.amount
+                        TransactionType.TRANSFER -> Unit
+                    }
+                }
+                val labelStep = when {
+                    count <= 7 -> 1
+                    count <= 16 -> 3
+                    else -> 5
+                }
+                (0 until count).map { i ->
+                    val dayMs = periodStart + i * 86_400_000L
+                    val short = FinanceFormatters.shortDate(dayMs)
+                    ChartBarPoint(
+                        label = if (i == 0 || i == count - 1 || i % labelStep == 0) short.substringBefore(" ") else "",
+                        fullLabel = FinanceFormatters.fullDate(dayMs),
+                        expense = exp[i],
+                        income = inc[i],
+                    )
+                }
+            }
+
+            AnalyticsGranularity.WEEK -> {
+                val weekCount = ((totalDays + 6) / 7).coerceIn(1, 20)
+                val exp = DoubleArray(weekCount)
+                val inc = DoubleArray(weekCount)
+                periodTxs.forEach { tx ->
+                    val dayOffset = DateMath.daysBetween(periodStart, tx.dateMillis).coerceAtLeast(0)
+                    val idx = (dayOffset / 7).coerceIn(0, weekCount - 1)
+                    when (tx.transactionType) {
+                        TransactionType.EXPENSE -> exp[idx] += tx.amount
+                        TransactionType.INCOME -> inc[idx] += tx.amount
+                        TransactionType.TRANSFER -> Unit
+                    }
+                }
+                (0 until weekCount).map { i ->
+                    val wStart = periodStart + i * 7L * 86_400_000L
+                    val wEnd = minOf(inclusiveEnd, wStart + 6L * 86_400_000L)
+                    ChartBarPoint(
+                        label = "S${i + 1}",
+                        fullLabel = "${FinanceFormatters.shortDate(wStart)} – ${FinanceFormatters.shortDate(wEnd)}",
+                        expense = exp[i],
+                        income = inc[i],
+                    )
+                }
+            }
+
+            AnalyticsGranularity.MONTH -> {
+                val startCal = Calendar.getInstance().apply {
+                    timeInMillis = periodStart
+                    set(Calendar.DAY_OF_MONTH, 1)
+                }
+                val endCal = Calendar.getInstance().apply {
+                    timeInMillis = inclusiveEnd
+                    set(Calendar.DAY_OF_MONTH, 1)
+                }
+                val buckets = mutableListOf<Pair<Int, Int>>()
+                val cursor = startCal.clone() as Calendar
+                while (!cursor.after(endCal) && buckets.size < 24) {
+                    buckets.add(cursor.get(Calendar.YEAR) to cursor.get(Calendar.MONTH))
+                    cursor.add(Calendar.MONTH, 1)
+                }
+                val exp = DoubleArray(buckets.size)
+                val inc = DoubleArray(buckets.size)
+                val txCal = Calendar.getInstance()
+                periodTxs.forEach { tx ->
+                    txCal.timeInMillis = tx.dateMillis
+                    val key = txCal.get(Calendar.YEAR) to txCal.get(Calendar.MONTH)
+                    val idx = buckets.indexOf(key)
+                    if (idx >= 0) {
+                        when (tx.transactionType) {
+                            TransactionType.EXPENSE -> exp[idx] += tx.amount
+                            TransactionType.INCOME -> inc[idx] += tx.amount
+                            TransactionType.TRANSFER -> Unit
+                        }
+                    }
+                }
+                buckets.mapIndexed { idx, (yr, mo) ->
+                    ChartBarPoint(
+                        label = FinanceFormatters.shortMonth(mo),
+                        fullLabel = FinanceFormatters.monthYear(yr, mo),
+                        expense = exp[idx],
+                        income = inc[idx],
                     )
                 }
             }

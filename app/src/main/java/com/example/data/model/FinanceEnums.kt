@@ -109,6 +109,7 @@ enum class AnalyticsPeriod(val labelEs: String) {
     WEEK("Semana"),
     MONTH("Mes"),
     YEAR("Año"),
+    CUSTOM("Rango"),
 }
 
 enum class AnalyticsGranularity(val labelEs: String) {
