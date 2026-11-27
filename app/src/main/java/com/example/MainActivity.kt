@@ -76,6 +76,7 @@ import com.example.data.model.CategoryEntity
 import com.example.data.model.RecurringKind
 import com.example.data.model.ScheduledPaymentEntity
 import com.example.data.model.TransactionEntity
+import com.example.data.model.TransactionType
 import com.example.notifications.PaymentNotificationManager
 import com.example.ui.screens.AccountsScreen
 import com.example.ui.screens.AnalyticsScreen
@@ -242,7 +243,17 @@ fun SaldoClaroApp(
         AlertDialog(
             onDismissRequest = { pendingDeleteTxFromDetail = null },
             title = { Text("Eliminar movimiento") },
-            text = { Text("Se eliminará \"${tx.title}\" y se revertirá el saldo en las cuentas afectadas.") },
+            text = {
+                val msg = when {
+                    tx.installmentPlanId != null && tx.transactionType == TransactionType.EXPENSE ->
+                        "Se eliminará la compra MSI \"${tx.title}\", su plan a meses en la tarjeta y se revertirá el saldo en las cuentas afectadas."
+                    tx.installmentPlanId != null && tx.transactionType == TransactionType.TRANSFER ->
+                        "Se eliminará el pago \"${tx.title}\", se revertirá la mensualidad en el plan MSI y el saldo en las cuentas afectadas."
+                    else ->
+                        "Se eliminará \"${tx.title}\" y se revertirá el saldo en las cuentas afectadas."
+                }
+                Text(msg)
+            },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteTransaction(tx.id)
@@ -507,6 +518,7 @@ fun SaldoClaroApp(
                                     movementSheet = MovementSheetRequest(mode, src, dst)
                                 },
                                 onPayInstallmentMonth = viewModel::payInstallmentMonth,
+                                onDeleteInstallmentPlan = viewModel::deleteInstallmentPlan,
                             )
                         }
                         composable(ROUTE_TRANSACTIONS) {

@@ -281,40 +281,83 @@ class FinanceRepository(private val database: FinanceDatabase) {
         }
     }
 
+    suspend fun cleanupOrphanedInstallmentPlans(): Int {
+        return dao.deleteOrphanedInstallmentPlans()
+    }
+
     suspend fun deleteInstallmentPlan(planId: Long) {
-        dao.deleteInstallmentPlanById(planId)
+        database.withTransaction {
+            val linkedTxs = dao.getTransactionsByInstallmentPlanId(planId)
+            // Revert monthly TRANSFER payments first, then the original EXPENSE purchase,
+            // so credit card balances never clamp prematurely at 0.0.
+            val orderedTxs = linkedTxs.sortedBy { if (it.transactionType == TransactionType.TRANSFER) 0 else 1 }
+            orderedTxs.forEach { tx ->
+                revertTransactionBalancesOnly(tx)
+                dao.deleteTransactionById(tx.id)
+            }
+            dao.deleteInstallmentPlanById(planId)
+        }
     }
 
     suspend fun deleteTransactionWithRollback(transactionId: Long) {
         database.withTransaction {
             val tx = dao.getTransactionById(transactionId) ?: return@withTransaction
-            when (tx.transactionType) {
-                TransactionType.INCOME, TransactionType.EXPENSE -> {
-                    val account = dao.getAccountById(tx.accountId)
-                    if (account != null) {
-                        val reverted = revertSingleBalance(
-                            currentBalance = account.balance,
-                            accountType = account.accountType,
-                            transactionType = tx.transactionType,
-                            amount = tx.amount,
-                        )
-                        dao.updateAccount(account.copy(balance = reverted))
-                    }
+            val planId = tx.installmentPlanId
+            if (planId != null && tx.transactionType == TransactionType.EXPENSE) {
+                // Deleting the original MSI purchase removes the entire installment plan and any linked payments.
+                val linkedTxs = dao.getTransactionsByInstallmentPlanId(planId)
+                val orderedTxs = linkedTxs.sortedBy { if (it.transactionType == TransactionType.TRANSFER) 0 else 1 }
+                orderedTxs.forEach { linked ->
+                    revertTransactionBalancesOnly(linked)
+                    dao.deleteTransactionById(linked.id)
                 }
-                TransactionType.TRANSFER -> {
-                    val source = dao.getAccountById(tx.accountId)
-                    val dest = tx.destinationAccountId?.let { dao.getAccountById(it) }
-                    if (source != null) {
-                        val revertedSource = revertTransferSourceBalance(source.balance, source.accountType, tx.amount)
-                        dao.updateAccount(source.copy(balance = revertedSource))
-                    }
-                    if (dest != null) {
-                        val revertedDest = revertTransferDestinationBalance(dest.balance, dest.accountType, tx.amount)
-                        dao.updateAccount(dest.copy(balance = revertedDest))
-                    }
+                if (linkedTxs.none { it.id == tx.id }) {
+                    revertTransactionBalancesOnly(tx)
+                    dao.deleteTransactionById(tx.id)
+                }
+                dao.deleteInstallmentPlanById(planId)
+                return@withTransaction
+            }
+
+            revertTransactionBalancesOnly(tx)
+            dao.deleteTransactionById(transactionId)
+
+            if (planId != null && tx.transactionType == TransactionType.TRANSFER) {
+                // Deleting a monthly MSI quota payment rolls back paidMonths on the plan.
+                val plan = dao.getInstallmentPlanById(planId)
+                if (plan != null && plan.paidMonths > 0) {
+                    dao.updateInstallmentPlan(plan.copy(paidMonths = max(0, plan.paidMonths - 1)))
                 }
             }
-            dao.deleteTransactionById(transactionId)
+        }
+    }
+
+    private suspend fun revertTransactionBalancesOnly(tx: TransactionEntity) {
+        when (tx.transactionType) {
+            TransactionType.INCOME, TransactionType.EXPENSE -> {
+                val account = dao.getAccountById(tx.accountId)
+                if (account != null) {
+                    val reverted = revertSingleBalance(
+                        currentBalance = account.balance,
+                        accountType = account.accountType,
+                        transactionType = tx.transactionType,
+                        amount = tx.amount,
+                    )
+                    dao.updateAccount(account.copy(balance = reverted))
+                }
+            }
+            TransactionType.TRANSFER -> {
+                val source = dao.getAccountById(tx.accountId)
+                val dest = tx.destinationAccountId?.let { dao.getAccountById(it) }
+                if (source != null) {
+                    val revertedSource = revertTransferSourceBalance(source.balance, source.accountType, tx.amount)
+                    dao.updateAccount(source.copy(balance = revertedSource))
+                }
+                if (dest != null) {
+                    val revertedDest = revertTransferDestinationBalance(dest.balance, dest.accountType, tx.amount)
+                    dao.updateAccount(dest.copy(balance = revertedDest))
+                }
+            }
         }
     }
 

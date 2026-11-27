@@ -286,7 +286,15 @@ fun TransactionsScreen(
             onDismissRequest = { pendingDelete = null },
             title = { Text("Eliminar movimiento") },
             text = {
-                Text("Se eliminará \"${tx.title}\" y se revertirá automáticamente el saldo en las cuentas afectadas.")
+                val msg = when {
+                    tx.installmentPlanId != null && tx.transactionType == TransactionType.EXPENSE ->
+                        "Se eliminará la compra MSI \"${tx.title}\", su plan a meses en la tarjeta y se revertirá el saldo en las cuentas afectadas."
+                    tx.installmentPlanId != null && tx.transactionType == TransactionType.TRANSFER ->
+                        "Se eliminará el pago \"${tx.title}\", se revertirá la mensualidad en el plan MSI y el saldo en las cuentas afectadas."
+                    else ->
+                        "Se eliminará \"${tx.title}\" y se revertirá automáticamente el saldo en las cuentas afectadas."
+                }
+                Text(msg)
             },
             confirmButton = {
                 TextButton(onClick = {

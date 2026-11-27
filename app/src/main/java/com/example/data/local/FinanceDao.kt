@@ -66,6 +66,9 @@ interface FinanceDao {
     @Query("DELETE FROM transactions WHERE accountId = :accountId OR destinationAccountId = :accountId")
     suspend fun deleteTransactionsForAccount(accountId: Long)
 
+    @Query("SELECT * FROM transactions WHERE installmentPlanId = :planId ORDER BY dateMillis DESC, id DESC")
+    suspend fun getTransactionsByInstallmentPlanId(planId: Long): List<TransactionEntity>
+
     // Installment Plans (MSI)
     @Query("SELECT * FROM installment_plans ORDER BY startDateMillis DESC")
     fun observeInstallmentPlans(): Flow<List<InstallmentPlanEntity>>
@@ -90,6 +93,9 @@ interface FinanceDao {
 
     @Query("DELETE FROM installment_plans WHERE creditCardAccountId = :accountId")
     suspend fun deleteInstallmentsForAccount(accountId: Long)
+
+    @Query("DELETE FROM installment_plans WHERE id NOT IN (SELECT DISTINCT installmentPlanId FROM transactions WHERE installmentPlanId IS NOT NULL)")
+    suspend fun deleteOrphanedInstallmentPlans(): Int
 
     // Scheduled Payments (Subscriptions & Recurring Bills)
     @Query("SELECT * FROM scheduled_payments ORDER BY isActive DESC, nextDueDateMillis ASC")

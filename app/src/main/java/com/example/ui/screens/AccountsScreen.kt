@@ -90,11 +90,13 @@ fun AccountsScreen(
     onDeleteAccount: (AccountEntity) -> Unit,
     onOpenMovementSheet: (MovementSheetMode, Long?, Long?) -> Unit,
     onPayInstallmentMonth: (planId: Long, fromAccountId: Long) -> Unit,
+    onDeleteInstallmentPlan: (InstallmentPlanEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf(AccountsFilter.ALL) }
     var accountPendingDelete by remember { mutableStateOf<AccountEntity?>(null) }
     var installmentPendingPay by remember { mutableStateOf<InstallmentPlanEntity?>(null) }
+    var installmentPendingDelete by remember { mutableStateOf<InstallmentPlanEntity?>(null) }
 
     val debitAccounts = state.accounts.filter { it.accountType == AccountType.DEBIT }
     val savingsAndCashAccounts = state.accounts.filter {
@@ -172,6 +174,30 @@ fun AccountsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { installmentPendingPay = null }) { Text("Cancelar") }
+            },
+        )
+    }
+
+    if (installmentPendingDelete != null) {
+        val plan = installmentPendingDelete!!
+        AlertDialog(
+            onDismissRequest = { installmentPendingDelete = null },
+            title = { Text("Eliminar compra MSI") },
+            text = {
+                Text(
+                    "Se eliminará \"${plan.description}\" junto con sus movimientos MSI asociados y se revertirá el saldo en las cuentas afectadas.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteInstallmentPlan(plan)
+                    installmentPendingDelete = null
+                }) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { installmentPendingDelete = null }) { Text("Cancelar") }
             },
         )
     }
@@ -306,6 +332,7 @@ fun AccountsScreen(
                             onOpenMovementSheet(MovementSheetMode.MSI, summary.card.id, null)
                         },
                         onPayInstallment = { plan -> installmentPendingPay = plan },
+                        onDeleteInstallment = { plan -> installmentPendingDelete = plan },
                         onEdit = { onEditAccount(summary.card) },
                         onDelete = { accountPendingDelete = summary.card },
                     )
@@ -553,6 +580,7 @@ private fun CreditCardDetailCard(
     onPayCard: () -> Unit,
     onAddMsi: () -> Unit,
     onPayInstallment: (InstallmentPlanEntity) -> Unit,
+    onDeleteInstallment: (InstallmentPlanEntity) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -825,16 +853,34 @@ private fun CreditCardDetailCard(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
-                                    Button(
-                                        onClick = { onPayInstallment(plan) },
-                                        shape = RoundedCornerShape(10.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.secondary,
-                                        ),
-                                        modifier = Modifier.height(34.dp),
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                                     ) {
-                                        Text("Pagar mes", style = MaterialTheme.typography.labelSmall)
+                                        Button(
+                                            onClick = { onPayInstallment(plan) },
+                                            shape = RoundedCornerShape(10.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.secondary,
+                                            ),
+                                            modifier = Modifier.height(34.dp),
+                                        ) {
+                                            Text("Pagar mes", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        IconButton(
+                                            onClick = { onDeleteInstallment(plan) },
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .testTag("msi_delete_${plan.id}"),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.DeleteOutline,
+                                                contentDescription = "Eliminar compra MSI",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
                                     }
                                 }
                                 LinearProgressIndicator(

@@ -155,6 +155,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 repository.ensureSeeded(getApplication())
+                repository.cleanupOrphanedInstallmentPlans()
             }
         }
     }
@@ -433,6 +434,18 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 postMessage("Mensualidad MSI pagada")
             }.onFailure {
                 postMessage(it.message ?: "Error al registrar el pago MSI")
+            }
+        }
+    }
+
+    fun deleteInstallmentPlan(plan: InstallmentPlanEntity) {
+        viewModelScope.launch {
+            runCatching {
+                repository.deleteInstallmentPlan(plan.id)
+            }.onSuccess {
+                postMessage("Plan MSI \"${plan.description}\" eliminado y saldo actualizado")
+            }.onFailure {
+                postMessage(it.message ?: "No se pudo eliminar el plan MSI")
             }
         }
     }
